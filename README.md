@@ -10,7 +10,7 @@ Given an implementation plan, `/plan-review` generates an HTML review document w
 
 - **Python 3.10+** on the host machine
 - **`claude` CLI** available in PATH
-- **`ptyprocess`** pip package (required for the PTY bridge)
+- **`ptyprocess`** (optional) — battle-tested PTY wrapper. Plugin auto-detects and uses it if installed; otherwise falls back to a stdlib-only PTY implementation.
 
 ## Install
 
@@ -19,7 +19,7 @@ Given an implementation plan, `/plan-review` generates an HTML review document w
 /plugin marketplace add xmandeng/plan-review
 /plugin install plan-review
 
-# Install the one Python dependency
+# (Optional) Install ptyprocess for the more battle-tested PTY backend
 pip install ptyprocess
 ```
 
@@ -102,7 +102,7 @@ When the skill asks the main agent for plan sections, each section has an `id`, 
 ## Troubleshooting
 
 - **`devserver port already in use`** — another process holds port 8765. Kill it, or set `PLAN_REVIEW_PORT=8766` and invoke again.
-- **`ptyprocess not installed`** — run `pip install ptyprocess` in the environment where `python3` runs for you.
+- **PTY bridge errors** — the plugin tries `ptyprocess` first, then falls back to stdlib `pty.fork()`. If you hit problems on the stdlib path and want to try the third-party wrapper, run `pip install ptyprocess`.
 - **`claude command not found` inside the terminal** — the devserver's PTY spawns `claude` from your PATH. Make sure `claude` is on PATH wherever you launched the devserver from.
 - **The URL shows `localhost` instead of a LAN IP** — your machine couldn't resolve an outbound IP (no network, VPN isolation, etc.). Set `PLAN_REVIEW_HOST` explicitly if you know the right address.
 

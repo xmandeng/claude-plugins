@@ -15,12 +15,16 @@ Endpoints:
 """
 
 import base64
+import fcntl
 import hashlib
 import json
 import os
+import pty
+import signal
 import socket
 import struct
 import sys
+import termios
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -118,6 +122,75 @@ def resolve_lan_ip() -> str:
         return "localhost"
 
 
+class _StdlibPty:
+    """Minimal ptyprocess.PtyProcess-compatible PTY using stdlib only.
+
+    Used as a fallback when `ptyprocess` is not installed. Exposes the same
+    `.fd`, `.setwinsize()`, `.isalive()`, `.terminate()` interface so the
+    bridge code below works against either backend transparently.
+    """
+
+    def __init__(self, argv, cwd=None, env=None, dimensions=(40, 120)):
+        self.pid, self.fd = pty.fork()
+        if self.pid == 0:
+            # Child: replace process with the target command
+            try:
+                if cwd:
+                    os.chdir(cwd)
+            except OSError:
+                pass
+            try:
+                os.execvpe(argv[0], argv, env or os.environ.copy())
+            except OSError:
+                os._exit(127)
+        # Parent: best-effort initial window size
+        try:
+            self.setwinsize(*dimensions)
+        except OSError:
+            pass
+
+    def setwinsize(self, rows: int, cols: int) -> None:
+        fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+
+    def isalive(self) -> bool:
+        try:
+            result_pid, _ = os.waitpid(self.pid, os.WNOHANG)
+            return result_pid == 0
+        except ChildProcessError:
+            return False
+
+    def terminate(self, force: bool = False) -> None:
+        sig = signal.SIGKILL if force else signal.SIGTERM
+        try:
+            os.kill(self.pid, sig)
+        except (ProcessLookupError, OSError):
+            return
+        try:
+            os.waitpid(self.pid, 0)
+        except (ChildProcessError, OSError):
+            pass
+        try:
+            os.close(self.fd)
+        except OSError:
+            pass
+
+
+def _pty_spawn(argv, cwd, env, dimensions=(40, 120)):
+    """Spawn a PTY child. Prefers `ptyprocess`, falls back to stdlib.
+
+    Returns an object exposing `.fd`, `.setwinsize(rows, cols)`, `.isalive()`,
+    and `.terminate(force=False)` — compatible with both `ptyprocess.PtyProcess`
+    and the in-house `_StdlibPty` fallback.
+    """
+    try:
+        import ptyprocess  # type: ignore[import-untyped]
+        return ptyprocess.PtyProcess.spawn(  # type: ignore[no-any-return]
+            argv, cwd=cwd, env=env, dimensions=dimensions
+        )
+    except ImportError:
+        return _StdlibPty(argv, cwd=cwd, env=env, dimensions=dimensions)
+
+
 def bridge_ws_to_claude_pty(sock: socket.socket, cwd: str) -> None:
     """Spawn `claude --continue` in a PTY and bridge stdin/stdout to the websocket.
 
@@ -125,33 +198,18 @@ def bridge_ws_to_claude_pty(sock: socket.socket, cwd: str) -> None:
       - BINARY frames in both directions carry raw PTY bytes (terminal I/O).
       - TEXT frames carry JSON control messages from the client. Currently
         only `{"type":"resize","rows":N,"cols":N}` is recognised.
-    """
-    try:
-        import ptyprocess
-    except ImportError:
-        try:
-            ws_send_frame(
-                sock,
-                OP_TEXT,
-                json.dumps(
-                    {"error": "ptyprocess not installed — run `pip install ptyprocess`"}
-                ).encode(),
-            )
-            ws_send_frame(sock, OP_CLOSE, b"")
-        except OSError:
-            pass
-        return
 
+    Backend selection: if `ptyprocess` is installed, uses it (battle-tested
+    third-party PTY wrapper). Otherwise falls back to a stdlib-only
+    implementation. Either way works — `pip install ptyprocess` is optional.
+
+    Unix-only (Windows would need `pywinpty`; out of scope).
+    """
     env = os.environ.copy()
     env.setdefault("TERM", "xterm-256color")
 
     try:
-        proc = ptyprocess.PtyProcess.spawn(  # type: ignore[attr-defined]
-            ["claude", "--continue"],
-            cwd=cwd,
-            env=env,
-            dimensions=(40, 120),
-        )
+        proc = _pty_spawn(["claude", "--continue"], cwd=cwd, env=env)
     except Exception as exc:
         try:
             ws_send_frame(

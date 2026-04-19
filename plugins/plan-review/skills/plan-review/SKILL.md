@@ -105,8 +105,8 @@ The devserver's PTY bridge spawns `claude --continue`, which resumes the most-re
 ## Prerequisites
 
 - Python 3.10+ on the user's machine
-- `ptyprocess` pip package (`pip install ptyprocess`) for the PTY bridge
 - `claude` CLI available in PATH
+- `ptyprocess` (optional) — used by the devserver if installed; otherwise the bridge falls back to stdlib `pty.fork()`. No user action needed either way.
 
 ## Environment Variable Reference
 
