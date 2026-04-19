@@ -53,12 +53,15 @@ When invoked:
    - `content` — markdown-like string (supports `**bold**`, `` `code` ``, fenced code blocks, `### Heading`, `- list items`, tables, `[links](url)`)
    - `revised` (optional) — set to `true` to highlight as updated in subsequent review rounds
 
+5a. **Read the authoring session id.** Look for the `plan-review-session-id: <sid>` line in your own context — it is injected by the plugin's `UserPromptSubmit` hook on every turn. Extract `<sid>` for step 7. If absent, the hook did not fire (plugin not installed, or first turn of a malformed setup) — surface the error to the user rather than generating an unusable HTML.
+
 6. **Replace the `docSections` array** in the template with the provided sections.
 
 7. **Update identifiers** in the HTML:
    - `<title>` tag → `Plan Review: <ticket>: <title>` (or `Plan Review: <title>` if no ticket)
    - Topbar `<h1>` → `<ticket>: <title>` (or `<title>`)
    - `PLAN_NAME` JS constant → `<ticket>: <title>` (or `<title>`)
+   - `CLAUDE_SESSION` JS constant → the session id extracted in step 5a. The embedded terminal uses this to spawn `claude --resume <sid>`.
 
 8. **Write the file** to the resolved output directory.
 
@@ -117,9 +120,11 @@ The preamble text:
 
 ## Session Resume
 
-The devserver's PTY bridge spawns `claude --continue`, which resumes the most-recently-modified Claude Code session in the working directory.
+The devserver's PTY bridge spawns `claude --resume <session-id>` using the sid embedded in the generated HTML at authoring time (see step 5a and step 7). This guarantees the browser resumes the exact session that authored the plan, even when multiple Claude Code sessions run in the same project.
 
-**Known limitation:** if the user runs multiple Claude Code sessions in the same project between creating and resuming a review, `--continue` may pick the wrong one. Close other sessions before resuming, or create the review fresh.
+### Handoff
+
+Each generated review includes a "Hand off to terminal" button that copies `claude --resume <sid>` to the clipboard and sends Ctrl+D to the embedded Claude child so the session is released. Paste the copied command in any local terminal to resume from there.
 
 ## Prerequisites
 
