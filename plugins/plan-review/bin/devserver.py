@@ -122,6 +122,38 @@ def resolve_lan_ip() -> str:
         return "localhost"
 
 
+def find_project_root(start: str) -> str:
+    """Walk up from `start` looking for a project marker (.git or .claude).
+
+    Used to anchor `claude --continue` at the project root so it finds the
+    right session, even when the devserver was launched from a subdirectory
+    (e.g. `.plan-review/`). Falls back to `start` if no marker is found.
+    """
+    p = Path(start).resolve()
+    for ancestor in [p, *p.parents]:
+        if (ancestor / ".git").exists() or (ancestor / ".claude").exists():
+            return str(ancestor)
+    return str(p)
+
+
+def has_resumable_session(project_root: str) -> bool:
+    """True if Claude Code has any session .jsonl files for this project root.
+
+    Claude Code stores session logs under
+    `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl` where the encoding replaces
+    `/` with `-`. If no such files exist, `claude --continue` will fail with
+    'No conversation found to continue' — better to spawn a fresh `claude`.
+    """
+    encoded = project_root.replace("/", "-")
+    sessions_dir = Path.home() / ".claude" / "projects" / encoded
+    if not sessions_dir.is_dir():
+        return False
+    try:
+        return any(f.suffix == ".jsonl" for f in sessions_dir.iterdir())
+    except OSError:
+        return False
+
+
 class _StdlibPty:
     """Minimal ptyprocess.PtyProcess-compatible PTY using stdlib only.
 
@@ -208,8 +240,20 @@ def bridge_ws_to_claude_pty(sock: socket.socket, cwd: str) -> None:
     env = os.environ.copy()
     env.setdefault("TERM", "xterm-256color")
 
+    # Anchor at the project root so `claude --continue` finds sessions stored
+    # under the project's encoded path, even when the devserver runs from a
+    # subdirectory (e.g. `.plan-review/`). Fall back to fresh `claude` when no
+    # resumable session exists, so we don't error with "No conversation found
+    # to continue" on first use.
+    project_root = find_project_root(cwd)
+    argv = (
+        ["claude", "--continue"]
+        if has_resumable_session(project_root)
+        else ["claude"]
+    )
+
     try:
-        proc = _pty_spawn(["claude", "--continue"], cwd=cwd, env=env)
+        proc = _pty_spawn(argv, cwd=project_root, env=env)
     except Exception as exc:
         try:
             ws_send_frame(
@@ -377,9 +421,10 @@ def main() -> None:
 
     server = ReusableThreadingHTTPServer(("0.0.0.0", port), DevHandler)
     lan_ip = resolve_lan_ip()
+    project_root = find_project_root(str(Path.cwd()))
     print(f"plan-review devserver: http://{lan_ip}:{port}/")
     print(f"Serving: {Path.cwd()}")
-    print(f"WS /api/claude bridges to `claude --continue` from {Path.cwd()}")
+    print(f"WS /api/claude bridges to `claude` (or `--continue` if session exists) from {project_root}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
