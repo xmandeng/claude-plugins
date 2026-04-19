@@ -4,7 +4,7 @@ Growing collection of [Claude Code](https://claude.com/claude-code) plugins, dis
 
 ## Quick Start
 
-Add the marketplace once (this clones the repo into your local plugin cache):
+Add the marketplace once:
 
 ```
 /plugin marketplace add xmandeng/claude-plugins
@@ -15,8 +15,6 @@ Then install any plugin from the list below:
 ```
 /plugin install <plugin-name>@xmandeng-plugins
 ```
-
-> **Why two names?** The GitHub repo is `xmandeng/claude-plugins`, but the marketplace's internal identifier is `xmandeng-plugins` (Claude Code reserves the `claude-*` namespace for Anthropic's official marketplace, so we can't use `claude-plugins` as the marketplace name). The `xmandeng/claude-plugins` form is what you `marketplace add`; the `@xmandeng-plugins` form is what you `install` against.
 
 ---
 
