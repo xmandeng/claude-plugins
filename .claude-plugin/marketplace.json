@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "plan-review",
-  "description": "Marketplace for the plan-review plugin: interactive HTML review playgrounds for implementation plans with Send-to-Claude PTY bridge.",
+  "name": "claude-plugins",
+  "description": "Collection of Claude Code plugins.",
   "owner": {
     "name": "xmandeng",
     "email": "mandeng@gmail.com"
@@ -12,7 +12,7 @@
       "description": "Interactive HTML review playgrounds for implementation plans. Section-by-section approve/revise/question controls and a Send-to-Claude button that drives a live Claude Code session via an embedded terminal.",
       "category": "productivity",
       "source": "./plugins/plan-review",
-      "homepage": "https://github.com/xmandeng/plan-review"
+      "homepage": "https://github.com/xmandeng/claude-plugins/tree/main/plugins/plan-review"
     }
   ]
 }

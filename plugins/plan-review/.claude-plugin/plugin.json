@@ -6,8 +6,8 @@
     "name": "xmandeng",
     "email": "mandeng@gmail.com"
   },
-  "homepage": "https://github.com/xmandeng/plan-review",
-  "repository": "https://github.com/xmandeng/plan-review",
+  "homepage": "https://github.com/xmandeng/claude-plugins/tree/main/plugins/plan-review",
+  "repository": "https://github.com/xmandeng/claude-plugins",
   "license": "MIT",
   "keywords": ["plan", "review", "playground", "feedback", "html"]
 }

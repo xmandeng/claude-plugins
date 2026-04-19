@@ -30,7 +30,7 @@ A third form with both args explicit (`/plan-review <id> <title>`) is **not** su
 ### Output Directory Resolution
 
 1. **`PLAN_REVIEW_DIR` env var** (if set) — explicit override, absolute or project-relative.
-2. **`.claude/plans/`** — default, auto-created via `mkdir -p` if missing.
+2. **`.plan-review/`** — default, auto-created via `mkdir -p` if missing.
 
 ## Instructions
 
@@ -41,7 +41,7 @@ When invoked:
    - One arg: treat as ticket ID. Accept any tracker format. Infer title from conversation; ask if the title is unclear.
    - Free-form slugs (e.g., `auth-rework`) passed as a single arg are **not** ticket IDs — treat as title text or ask the user to clarify.
 
-2. **Resolve output directory.** Use `$PLAN_REVIEW_DIR` if set, else `.claude/plans/`. Ensure it exists (`mkdir -p`).
+2. **Resolve output directory.** Use `$PLAN_REVIEW_DIR` if set, else `.plan-review/`. Ensure it exists (`mkdir -p`).
 
 3. **Construct filename.** `<output-dir>/<ticket>-<slugified-title>-review.html` (lowercase, hyphens). If no ticket, use `<slugified-title>-review.html`.
 
@@ -112,7 +112,7 @@ The devserver's PTY bridge spawns `claude --continue`, which resumes the most-re
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PLAN_REVIEW_DIR` | `.claude/plans/` | Where generated review HTML files are written |
+| `PLAN_REVIEW_DIR` | `.plan-review/` | Where generated review HTML files are written |
 | `PLAN_REVIEW_HOST` | auto-detected LAN IP | Override the host in the returned URL |
 | `PLAN_REVIEW_PORT` | `8765` | Devserver port |
 
