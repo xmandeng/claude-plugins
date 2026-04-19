@@ -1,6 +1,6 @@
 # plan-review
 
-> Part of the [`claude-plugins`](../../) marketplace. See the [marketplace README](../../README.md) for the full plugin list.
+> Part of the [`xmandeng-plugins`](../../) marketplace (repo: `xmandeng/claude-plugins`). See the [marketplace README](../../README.md) for the full plugin list.
 
 Interactive HTML review playgrounds for implementation plans. Turn any plan into a section-by-section reviewable document with approve / revise / question controls, then send structured feedback directly to a live Claude Code session via an embedded terminal.
 
