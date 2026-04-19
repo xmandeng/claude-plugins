@@ -64,11 +64,11 @@ When invoked:
 
 9. **Start the devserver** if not already running on port 8765. Check `lsof -i :8765`; if free, start with:
    ```bash
-   cd <output-dir> && python3 "${CLAUDE_PLUGIN_ROOT}/bin/devserver.py" 8765 &
+   python3 "${CLAUDE_PLUGIN_ROOT}/bin/devserver.py" 8765 &
    ```
-   The devserver prints the LAN IP at startup and serves from its CWD.
+   Do NOT `cd` first — the devserver must be launched from the user's project root (their current `$PWD`) so the embedded `claude --continue` finds the right session. It serves from CWD and prints the LAN IP at startup.
 
-10. **Return the URL.** Format: `http://<lan-ip>:8765/<filename>.html`.
+10. **Return the URL.** Format: `http://<lan-ip>:8765/<output-dir-relative-to-cwd>/<filename>.html` (e.g., `http://192.168.1.237:8765/.plan-review/TT-128-foo-review.html`).
 
 ## Structuring Good Review Sections
 
