@@ -11,7 +11,7 @@
       "name": "plan-review",
       "description": "Interactive HTML review playgrounds for implementation plans. Section-by-section approve/revise/question controls and a Send-to-Claude button that drives a live Claude Code session via an embedded terminal.",
       "category": "productivity",
-      "source": ".",
+      "source": "./plugins/plan-review",
       "homepage": "https://github.com/xmandeng/plan-review"
     }
   ]

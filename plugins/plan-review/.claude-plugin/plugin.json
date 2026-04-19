@@ -1,9 +1,13 @@
 {
   "name": "plan-review",
+  "version": "0.1.0",
   "description": "Interactive HTML review playgrounds for implementation plans. Section-by-section approve/revise/question controls and a Send-to-Claude button that drives a live Claude Code session via an embedded terminal.",
   "author": {
     "name": "xmandeng",
     "email": "mandeng@gmail.com"
   },
-  "license": "MIT"
+  "homepage": "https://github.com/xmandeng/plan-review",
+  "repository": "https://github.com/xmandeng/plan-review",
+  "license": "MIT",
+  "keywords": ["plan", "review", "playground", "feedback", "html"]
 }
