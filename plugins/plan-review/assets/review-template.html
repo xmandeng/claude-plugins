@@ -793,6 +793,21 @@
       color: var(--green);
     }
 
+    .handoff-status-cmd {
+      display: block;
+      margin-top: 4px;
+      padding: 4px 8px;
+      background: var(--bg-surface-2);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      user-select: all;
+      white-space: nowrap;
+      overflow-x: auto;
+    }
+
     /* Send to Claude button (TT-127) */
     .send-claude-btn {
       margin: 12px 16px 16px;
@@ -1720,9 +1735,17 @@ def example_function(arg: str) -> bool:
           if (__claudeWS && __claudeWS.readyState === WebSocket.OPEN) {
             try { __claudeWS.send(new Uint8Array([0x04])); } catch (e) { }
           }
-          handoffStatus.textContent = copied
-            ? `Copied: ${cmd} — paste into your terminal to resume`
-            : `Run this in your terminal: ${cmd}`;
+          // Render the command on its own line so triple-click selects just the command.
+          handoffStatus.textContent = '';
+          const label = document.createElement('div');
+          label.textContent = copied
+            ? 'Copied to clipboard — paste this in your terminal:'
+            : 'Run this in your terminal:';
+          const cmdLine = document.createElement('code');
+          cmdLine.className = 'handoff-status-cmd';
+          cmdLine.textContent = cmd;
+          handoffStatus.appendChild(label);
+          handoffStatus.appendChild(cmdLine);
           handoffStatus.classList.add('done');
           handoffBtn.disabled = true;
           handoffBtn.textContent = 'Session released';
