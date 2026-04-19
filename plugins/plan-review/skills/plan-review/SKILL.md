@@ -1,7 +1,7 @@
 ---
 name: plan-review
 description: Create an interactive HTML review playground for an implementation plan. Generates a section-by-section reviewable document with approve/revise/question controls and a "Send to Claude" button that delivers feedback directly to a live Claude Code session. Usage - /plan-review [<ticket>]
-allowed-tools: Read Write Edit Bash(mkdir:*) Bash(cp:*) Bash(lsof:*) Bash(python3:*) Bash(ls:*)
+allowed-tools: Read Write Edit Bash(mkdir:*) Bash(cp:*) Bash(lsof:*) Bash(python3:*) Bash(ls:*) Bash(cat:*) Bash(echo:*)
 argument-hint: "[<ticket>]"
 ---
 
@@ -62,13 +62,32 @@ When invoked:
 
 8. **Write the file** to the resolved output directory.
 
-9. **Start the devserver** if not already running on port 8765. Check `lsof -i :8765`; if free, start with:
-   ```bash
-   python3 "${CLAUDE_PLUGIN_ROOT}/bin/devserver.py" 8765 &
-   ```
-   Do NOT `cd` first — the devserver must be launched from the user's project root (their current `$PWD`) so the embedded `claude --continue` finds the right session. It serves from CWD and prints the LAN IP at startup.
+9. **Start (or reuse) the devserver.** Each project gets its own port, recorded in `<output-dir>/.devserver-port`. Re-invocations in the same project reuse the existing devserver; concurrent projects auto-allocate sequential free ports. Do NOT `cd` first — the devserver must be launched from the user's project root.
 
-10. **Return the URL.** Format: `http://<lan-ip>:8765/<output-dir-relative-to-cwd>/<filename>.html` (e.g., `http://192.168.1.237:8765/.plan-review/TT-128-foo-review.html`).
+   ```bash
+   OUT_DIR="${PLAN_REVIEW_DIR:-.plan-review}"
+   mkdir -p "$OUT_DIR"
+   PORT_FILE="$OUT_DIR/.devserver-port"
+
+   PORT=""
+   if [ -f "$PORT_FILE" ]; then
+     SAVED=$(cat "$PORT_FILE")
+     # Reuse if devserver is still listening on the recorded port
+     lsof -i ":$SAVED" >/dev/null 2>&1 && PORT="$SAVED"
+   fi
+
+   if [ -z "$PORT" ]; then
+     # Scan for first free port in 8765-8799
+     PORT=8765
+     while lsof -i ":$PORT" >/dev/null 2>&1 && [ "$PORT" -lt 8800 ]; do
+       PORT=$((PORT + 1))
+     done
+     python3 "${CLAUDE_PLUGIN_ROOT}/bin/devserver.py" "$PORT" &
+     echo "$PORT" > "$PORT_FILE"
+   fi
+   ```
+
+10. **Return the URL.** Format: `http://<lan-ip>:$PORT/<output-dir-relative-to-cwd>/<filename>.html` (e.g., `http://192.168.1.237:8765/.plan-review/TT-128-foo-review.html`).
 
 ## Structuring Good Review Sections
 
