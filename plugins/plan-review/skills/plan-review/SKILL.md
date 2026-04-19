@@ -20,12 +20,15 @@ A third form with both args explicit (`/plan-review <id> <title>`) is **not** su
 
 ## How It Works
 
-1. Read the bundled review template: `${CLAUDE_PLUGIN_ROOT}/assets/review-template.html`
-2. Populate the `docSections` array with plan content from the main agent.
-3. Set the page title, heading, and `PLAN_NAME` constant.
-4. Write the output HTML to the resolved output directory.
-5. Start the bundled devserver: `${CLAUDE_PLUGIN_ROOT}/bin/devserver.py` on port 8765.
-6. Return the LAN-IP URL.
+1. Check for a prior plan matching the ticket. If found, offer **Resume** / **Overwrite** / **Cancel**.
+2. Read the bundled review template: `${CLAUDE_PLUGIN_ROOT}/assets/review-template.html`
+3. Populate the `docSections` array with plan content from the main agent.
+4. Set the page title, heading, and `PLAN_NAME` constant.
+5. Write the output HTML to the resolved output directory.
+6. Start the bundled devserver: `${CLAUDE_PLUGIN_ROOT}/bin/devserver.py` on port 8765.
+7. Return the LAN-IP URL.
+
+On **Resume** the flow short-circuits: hydrate the prior plan's `docSections` and `priorApprovals` into the agent's context, rewrite only the `CLAUDE_SESSION` constant in the existing HTML, then jump to step 6.
 
 ### Output Directory Resolution
 
@@ -42,6 +45,28 @@ When invoked:
    - Free-form slugs (e.g., `auth-rework`) passed as a single arg are **not** ticket IDs — treat as title text or ask the user to clarify.
 
 2. **Resolve output directory.** Use `$PLAN_REVIEW_DIR` if set, else `.plan-review/`. Ensure it exists (`mkdir -p`).
+
+2a. **Detect prior plan for this ticket.** Before reading the template or constructing a new filename, glob the output directory for an existing HTML matching the ticket:
+
+   ```bash
+   shopt -s nullglob
+   PRIOR=( "$OUT_DIR"/"$TICKET"-*-review.html )
+   shopt -u nullglob
+   ```
+
+   Glob rather than exact `<ticket>-<slug>-review.html` match so the check still catches the prior file when the user has tweaked the plan title (slug drift). Skip this step entirely if no ticket was supplied — titles alone are too noisy to match prior runs reliably.
+
+   - **Zero matches** → continue to step 3 (write-new flow unchanged).
+   - **One match** → ask the user:
+
+     > Found a prior plan for `<ticket>` at `<path>` (modified `<mtime>`).
+     >
+     > - **Resume** — keep the plan content and your prior review marks; refresh the embedded session id so the terminal bridge works.
+     > - **Overwrite** — replace with a freshly generated plan from the current conversation. Prior review marks for this filename remain in the browser's localStorage.
+     > - **Cancel** — do nothing.
+
+     On **Resume**, jump to the "Resume: Hydrate and Refresh" section below. On **Overwrite**, continue to step 3. On **Cancel**, return without writing or starting the devserver.
+   - **Multiple matches** → list each prior file with path + mtime; ask the user to choose which to resume, or Overwrite / Cancel. (Rare: only happens if the title slug changed between runs and the stale file was never deleted.)
 
 3. **Construct filename.** `<output-dir>/<ticket>-<slugified-title>-review.html` (lowercase, hyphens). If no ticket, use `<slugified-title>-review.html`.
 
@@ -91,6 +116,26 @@ When invoked:
    ```
 
 10. **Return the URL.** Format: `http://<lan-ip>:$PORT/<output-dir-relative-to-cwd>/<filename>.html` (e.g., `http://192.168.1.237:8765/.plan-review/TT-128-foo-review.html`).
+
+## Resume: Hydrate and Refresh
+
+When the user chooses **Resume** at step 2a (or picks a specific file in the multi-match case):
+
+1. **Hydrate context.** Read the prior HTML. Locate the `const docSections = [...];` and `const priorApprovals = {...};` literals and internalize them into the conversation. Then surface a short summary to the user, e.g.:
+
+   > Resumed N-section plan: [list of section titles]. K sections previously approved, M flagged for revision. Where do you want to pick up?
+
+   This step is what makes resume a real resume — without it the agent is blind to the content it's serving. The cost is the prior plan's full text entering context, which is acceptable because resume is user-initiated and infrequent.
+
+2. **Refresh the session id.** Read the current session id from the `plan-review-session-id: <sid>` line injected by the `UserPromptSubmit` hook (same source step 5a uses). Rewrite **only** the `CLAUDE_SESSION = "..."` JS constant in the prior HTML by matching on the anchor and replacing the quoted value in place. Do **not** re-read the template or re-populate `docSections`, `priorApprovals`, `PLAN_NAME`, `<title>`, or `<h1>`.
+
+3. **Validate.** If the `CLAUDE_SESSION` constant can't be found (file edited externally, corrupted, or produced by a pre-session-id plugin version), surface the error and ask the user whether to regenerate from scratch. Do not silently overwrite.
+
+4. **Start (or reuse) the devserver** per step 9.
+
+5. **Return the URL** per step 10.
+
+`PLAN_NAME` is intentionally **not** rewritten on resume — the browser's `localStorage` key is `review-state:<PLAN_NAME>`, and preserving it is what keeps the reviewer's prior approve/revise/question marks attached to the restored file.
 
 ## Structuring Good Review Sections
 
