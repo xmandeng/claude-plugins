@@ -1,24 +1,41 @@
 # claude-plugins
 
-Collection of [Claude Code](https://claude.com/claude-code) plugins, distributed as a single marketplace.
+Growing collection of [Claude Code](https://claude.com/claude-code) plugins, distributed as a single marketplace.
 
-## Add the marketplace
+## Quick Start
+
+Add the marketplace once:
 
 ```
 /plugin marketplace add xmandeng/claude-plugins
 ```
 
-## Install a plugin
+Then install any plugin from the list below:
 
 ```
 /plugin install <plugin-name>@claude-plugins
 ```
 
+---
+
 ## Plugins
 
-| Plugin | Description |
-|---|---|
-| [`plan-review`](./plugins/plan-review/) | Interactive HTML review playgrounds for implementation plans. Section-by-section approve/revise/question controls with a Send-to-Claude button that drives a live Claude Code session via an embedded terminal. |
+### `plan-review`
+
+Interactive HTML review playgrounds for implementation plans. Each section of your plan gets independent **approve** / **revise** / **question** controls, and a **Send to Claude** button delivers structured feedback straight to a live Claude Code session via an embedded terminal — no copy-paste, no context-switching.
+
+- **Install:** `/plugin install plan-review@claude-plugins`
+- **Invoke:** `/plan-review [<ticket>]` inside any Claude Code session
+- **Docs:** [`plugins/plan-review/`](./plugins/plan-review/)
+
+---
+
+## Coming Soon
+
+- **Software architecture diagrams** — interactive before/after component maps for illustrating system designs, refactors, and plan implementations. Draggable nodes, annotated data flow, inline code snippets.
+- More ideas welcome — [open an issue](https://github.com/xmandeng/claude-plugins/issues).
+
+---
 
 ## Repository Layout
 
