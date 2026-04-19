@@ -13,7 +13,7 @@ Add the marketplace once:
 Then install any plugin from the list below:
 
 ```
-/plugin install <plugin-name>@claude-plugins
+/plugin install <plugin-name>@xmandeng-plugins
 ```
 
 ---
@@ -24,7 +24,7 @@ Then install any plugin from the list below:
 
 Interactive HTML review playgrounds for implementation plans. Each section of your plan gets independent **approve** / **revise** / **question** controls, and a **Send to Claude** button delivers structured feedback straight to a live Claude Code session via an embedded terminal — no copy-paste, no context-switching.
 
-- **Install:** `/plugin install plan-review@claude-plugins`
+- **Install:** `/plugin install plan-review@xmandeng-plugins`
 - **Invoke:** `/plan-review [<ticket>]` inside any Claude Code session
 - **Docs:** [`plugins/plan-review/`](./plugins/plan-review/)
 

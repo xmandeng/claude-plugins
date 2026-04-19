@@ -19,7 +19,7 @@ Given an implementation plan, `/plan-review` generates an HTML review document w
 ```bash
 # Add the marketplace (once) and install the plugin
 /plugin marketplace add xmandeng/claude-plugins
-/plugin install plan-review@claude-plugins
+/plugin install plan-review@xmandeng-plugins
 
 # (Optional) Install ptyprocess for the more battle-tested PTY backend
 pip install ptyprocess
