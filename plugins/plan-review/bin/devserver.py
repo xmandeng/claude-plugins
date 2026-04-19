@@ -1,7 +1,7 @@
 """Devserver for the plan-review plugin.
 
 Serves the generated review HTML over HTTP and bridges a browser xterm.js
-terminal to a local `claude --continue` PTY via WebSocket (/api/claude).
+terminal to a local `claude --resume <session-id>` PTY via WebSocket.
 
 Usage:
     python3 devserver.py [port]          # default port: 8765
@@ -10,8 +10,8 @@ Serves the current working directory. The skill is expected to `cd` into the
 output directory before invoking this script.
 
 Endpoints:
-    GET  /                 — static file serving (SimpleHTTPRequestHandler)
-    WS   /api/claude       — bridges browser xterm.js to `claude --continue` PTY
+    GET  /                            — static file serving (SimpleHTTPRequestHandler)
+    WS   /api/claude?session=<id>     — bridges browser xterm.js to `claude --resume <id>` PTY
 """
 
 import base64
@@ -28,6 +28,7 @@ import termios
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 
 # =============================================================================
@@ -191,8 +192,8 @@ def _pty_spawn(argv, cwd, env, dimensions=(40, 120)):
         return _StdlibPty(argv, cwd=cwd, env=env, dimensions=dimensions)
 
 
-def bridge_ws_to_claude_pty(sock: socket.socket, cwd: str) -> None:
-    """Spawn `claude --continue` in a PTY and bridge stdin/stdout to the websocket.
+def bridge_ws_to_claude_pty(sock: socket.socket, cwd: str, session_id: str) -> None:
+    """Spawn `claude --resume <session_id>` in a PTY and bridge stdin/stdout to the websocket.
 
     Wire protocol:
       - BINARY frames in both directions carry raw PTY bytes (terminal I/O).
@@ -205,15 +206,29 @@ def bridge_ws_to_claude_pty(sock: socket.socket, cwd: str) -> None:
 
     Unix-only (Windows would need `pywinpty`; out of scope).
     """
+    if not session_id:
+        try:
+            ws_send_frame(
+                sock,
+                OP_TEXT,
+                json.dumps(
+                    {"error": "WS /api/claude requires ?session=<id> query parameter"}
+                ).encode(),
+            )
+            ws_send_frame(sock, OP_CLOSE, b"")
+        except OSError:
+            pass
+        return
+
     env = os.environ.copy()
     env.setdefault("TERM", "xterm-256color")
 
-    # `cwd` here is the spawn cwd computed at devserver startup (project root).
-    # If `--continue` fails because no session exists for this dir, that's a
-    # real configuration error — we surface it rather than masking it by
-    # silently spawning fresh `claude`.
+    # `cwd` is the spawn cwd computed at devserver startup (project root).
+    # If `claude --resume <sid>` fails because the session id doesn't match a
+    # resumable transcript, that's a real configuration error — we surface it
+    # rather than masking by silently falling back to a fresh session.
     try:
-        proc = _pty_spawn(["claude", "--continue"], cwd=cwd, env=env)
+        proc = _pty_spawn(["claude", "--resume", session_id], cwd=cwd, env=env)
     except Exception as exc:
         try:
             ws_send_frame(
@@ -311,14 +326,17 @@ class DevHandler(SimpleHTTPRequestHandler):
     spawn_cwd: str = os.getcwd()
 
     def do_GET(self) -> None:
-        if self.path == "/api/claude" and (
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/claude" and (
             self.headers.get("Upgrade", "").lower() == "websocket"
         ):
-            self.handle_claude_upgrade()
+            session_values = parse_qs(parsed.query).get("session", [])
+            session_id = session_values[0] if session_values else ""
+            self.handle_claude_upgrade(session_id)
             return
         super().do_GET()
 
-    def handle_claude_upgrade(self) -> None:
+    def handle_claude_upgrade(self, session_id: str) -> None:
         key = self.headers.get("Sec-WebSocket-Key")
         version = self.headers.get("Sec-WebSocket-Version", "")
         if not key or version != "13":
@@ -339,7 +357,7 @@ class DevHandler(SimpleHTTPRequestHandler):
         )
         self.wfile.flush()
         try:
-            bridge_ws_to_claude_pty(self.connection, self.spawn_cwd)
+            bridge_ws_to_claude_pty(self.connection, self.spawn_cwd, session_id)
         except Exception as exc:
             self.log_message("WS /api/claude bridge error: %s", exc)
 
@@ -367,7 +385,7 @@ def main() -> None:
 
     # Spawn cwd = current working directory at startup. The skill invokes the
     # devserver from the user's project root (no `cd` first), so this is
-    # naturally the right place for `claude --continue` to find the session.
+    # naturally the right place for `claude --resume <sid>` to find the transcript.
     DevHandler.spawn_cwd = os.getcwd()
 
     class ReusableThreadingHTTPServer(ThreadingHTTPServer):
@@ -386,7 +404,7 @@ def main() -> None:
     lan_ip = resolve_lan_ip()
     print(f"plan-review devserver: http://{lan_ip}:{port}/")
     print(f"Serving: {Path.cwd()}")
-    print(f"PTY bridge spawns `claude --continue` from: {DevHandler.spawn_cwd}")
+    print(f"PTY bridge spawns `claude --resume <sid>` from: {DevHandler.spawn_cwd}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
