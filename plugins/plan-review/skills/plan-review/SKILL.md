@@ -1,7 +1,7 @@
 ---
 name: plan-review
 description: Create an interactive HTML review playground for an implementation plan. Generates a section-by-section reviewable document with approve/revise/question controls and a "Send to Claude" button that delivers feedback directly to a live Claude Code session. Usage - /plan-review [<ticket>]
-allowed-tools: Read, Write, Bash
+allowed-tools: Read Write Edit Bash(mkdir:*) Bash(cp:*) Bash(lsof:*) Bash(python3:*) Bash(ls:*)
 argument-hint: "[<ticket>]"
 ---
 
