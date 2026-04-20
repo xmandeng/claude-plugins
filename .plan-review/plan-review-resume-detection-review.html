@@ -1,0 +1,1899 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Plan Review: Plan-review resume detection</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --bg: #0d1117;
+      --bg-surface: #161b22;
+      --bg-surface-2: #1c2128;
+      --bg-hover: #21262d;
+      --border: #30363d;
+      --border-light: #484f58;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --text-dim: #6e7681;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --green-bg: rgba(63, 185, 80, 0.10);
+      --amber: #d29922;
+      --amber-bg: rgba(210, 153, 34, 0.10);
+      --red: #f85149;
+      --red-bg: rgba(248, 81, 73, 0.08);
+      --purple: #bc8cff;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      height: 100vh;
+      height: -webkit-fill-available;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Top bar */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 20px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      height: 52px;
+    }
+
+    .topbar h1 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .topbar .stats {
+      display: flex;
+      gap: 16px;
+      font-size: 12px;
+    }
+
+    .stat {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .stat .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .dot-pending {
+      background: var(--amber);
+    }
+
+    .dot-approved {
+      background: var(--green);
+    }
+
+    .dot-revision {
+      background: var(--red);
+    }
+
+    .dot-question {
+      background: var(--purple);
+    }
+
+    /* Main layout */
+    .main {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+    }
+
+    /* Resize handles */
+    .resize-handle {
+      width: 1px;
+      cursor: col-resize;
+      background: var(--border);
+      position: relative;
+      flex-shrink: 0;
+      z-index: 10;
+      overflow: visible;
+    }
+
+    .resize-handle::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: -10px;
+      right: -10px;
+    }
+
+    .resize-handle:hover,
+    .resize-handle.dragging {
+      background: var(--accent);
+      width: 3px;
+    }
+
+    body.resizing {
+      cursor: col-resize;
+      user-select: none;
+    }
+
+    /* Topbar collapse toggle buttons */
+    .topbar-toggles {
+      display: flex;
+      gap: 6px;
+    }
+
+    .collapse-toggle {
+      width: 36px;
+      height: 32px;
+      background: var(--bg-surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+      -webkit-user-select: none;
+      user-select: none;
+      transition: background 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+    }
+
+    @media (hover: hover) {
+      .collapse-toggle:hover {
+        background: var(--bg-hover);
+        color: var(--text);
+        border-color: var(--accent);
+      }
+    }
+
+    .collapse-toggle.panel-collapsed {
+      background: var(--accent);
+      color: var(--bg);
+      border-color: var(--accent);
+    }
+
+    /* Collapsed panel states */
+    .nav.collapsed {
+      width: 0 !important;
+      min-width: 0 !important;
+      padding: 0 !important;
+      overflow: hidden;
+    }
+
+    .right-panel.collapsed {
+      width: 0 !important;
+      min-width: 0 !important;
+      overflow: hidden;
+    }
+
+    .right-panel.collapsed>* {
+      display: none;
+    }
+
+    .nav.collapsed>* {
+      display: none;
+    }
+
+    .nav,
+    .right-panel {
+      transition: width 0.2s ease, min-width 0.2s ease, padding 0.2s ease;
+    }
+
+    /* Section nav */
+    .nav {
+      width: 240px;
+      min-width: 140px;
+      background: var(--bg-surface);
+      overflow-y: auto;
+      padding: 12px 0;
+    }
+
+    .nav-item {
+      padding: 8px 16px;
+      font-size: 12px;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-left: 3px solid transparent;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-item:hover {
+      background: var(--bg-hover);
+      color: var(--text);
+    }
+
+    .nav-item.active {
+      background: var(--bg-hover);
+      border-left-color: var(--accent);
+      color: var(--text);
+    }
+
+    .nav-item .status-icon {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+    }
+
+    .nav-item .label {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Document panel */
+    .doc-panel {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 32px;
+      min-width: 0;
+    }
+
+    .doc-panel::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .doc-panel::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .doc-panel::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 4px;
+    }
+
+    /* Section rendering */
+    .section {
+      margin-bottom: 16px;
+      scroll-margin-top: 20px;
+      padding: 16px 16px 10px;
+      border-radius: 6px;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section-header h2 {
+      font-size: 18px;
+      font-weight: 600;
+      flex: 1;
+    }
+
+    .section-header h3 {
+      font-size: 15px;
+      font-weight: 600;
+      flex: 1;
+    }
+
+    .section-content {
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text-muted);
+    }
+
+    .section-content p {
+      margin-bottom: 12px;
+    }
+
+    .section-content strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .section-content code {
+      font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+      font-size: 12px;
+      background: var(--bg-surface-2);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--accent);
+    }
+
+    .section-content pre {
+      background: var(--bg-surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 14px;
+      margin: 12px 0;
+      overflow-x: auto;
+      font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--text-muted);
+    }
+
+    .section-content pre code {
+      background: none;
+      padding: 0;
+      color: inherit;
+    }
+
+    .section-content ul,
+    .section-content ol {
+      margin: 8px 0 12px 24px;
+    }
+
+    .section-content li {
+      margin-bottom: 4px;
+    }
+
+    .section-content table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 13px;
+    }
+
+    .section-content th,
+    .section-content td {
+      text-align: left;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+    }
+
+    .section-content th {
+      background: var(--bg-surface-2);
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .section-content hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 20px 0;
+    }
+
+    /* Review actions */
+    .review-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+
+    .review-btn {
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 500;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+      background: var(--bg-surface);
+      color: var(--text-muted);
+      transition: all 0.15s;
+    }
+
+    .review-btn:hover {
+      border-color: var(--border-light);
+      color: var(--text);
+    }
+
+    .review-btn.active-approved {
+      background: var(--green-bg);
+      border-color: var(--green);
+      color: var(--green);
+    }
+
+    .review-btn.active-revision {
+      background: var(--red-bg);
+      border-color: var(--red);
+      color: var(--red);
+    }
+
+    .review-btn.active-question {
+      background: rgba(188, 140, 255, 0.10);
+      border-color: var(--purple);
+      color: var(--purple);
+    }
+
+    .comment-area {
+      margin-top: 10px;
+      display: none;
+    }
+
+    .comment-area.visible {
+      display: block;
+    }
+
+    .comment-area textarea {
+      width: 100%;
+      background: var(--bg-surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 10px;
+      font-family: inherit;
+      font-size: 13px;
+      resize: vertical;
+      min-height: 60px;
+      outline: none;
+      margin-bottom: 0;
+      display: block;
+    }
+
+    .comment-area textarea:focus {
+      border-color: var(--accent);
+    }
+
+    .comment-area textarea::placeholder {
+      color: var(--text-dim);
+    }
+
+    .existing-comment {
+      background: var(--bg-surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 8px;
+      position: relative;
+    }
+
+    .existing-comment .edit-btn {
+      position: absolute;
+      top: 6px;
+      right: 8px;
+      font-size: 11px;
+      color: var(--accent);
+      cursor: pointer;
+      background: none;
+      border: none;
+    }
+
+    /* Right panel: prompt output */
+    .right-panel {
+      width: 360px;
+      min-width: 200px;
+      background: var(--bg-surface);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .right-panel-header {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .right-panel-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+
+    .right-panel-content::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .right-panel-content::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 3px;
+    }
+
+    .prompt-output {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--text-muted);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .prompt-placeholder {
+      color: var(--text-dim);
+      font-style: italic;
+      font-size: 13px;
+      text-align: center;
+      padding: 40px 20px;
+    }
+
+    .copy-btn {
+      padding: 8px 16px;
+      margin: 12px 16px 16px;
+      background: var(--accent);
+      color: #0d1117;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+
+    .copy-btn:hover {
+      opacity: 0.9;
+    }
+
+    .copy-btn.copied {
+      background: var(--green);
+    }
+
+    /* Filter tabs in right panel */
+    .filter-tabs {
+      display: flex;
+      gap: 2px;
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-surface);
+    }
+
+    .filter-tab {
+      padding: 4px 10px;
+      font-size: 11px;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-radius: 4px;
+      transition: all 0.15s;
+    }
+
+    .filter-tab:hover {
+      background: var(--bg-hover);
+    }
+
+    .filter-tab.active {
+      background: var(--bg-hover);
+      color: var(--text);
+    }
+
+    /* Feedback summary items */
+    .feedback-item {
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+
+    .feedback-item:last-child {
+      border-bottom: none;
+    }
+
+    .feedback-item .fb-section {
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 4px;
+      font-size: 12px;
+    }
+
+    .feedback-item .fb-status {
+      display: inline-block;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-weight: 600;
+      margin-right: 6px;
+    }
+
+    .fb-status.approved {
+      background: var(--green-bg);
+      color: var(--green);
+    }
+
+    .fb-status.revision {
+      background: var(--red-bg);
+      color: var(--red);
+    }
+
+    .fb-status.question {
+      background: rgba(188, 140, 255, 0.1);
+      color: var(--purple);
+    }
+
+    .feedback-item .fb-comment {
+      color: var(--text-muted);
+      font-size: 12px;
+      margin-top: 4px;
+    }
+
+    /* Revised section highlight */
+    .section.revised {
+      border-left: 3px solid var(--accent) !important;
+      background: rgba(88, 166, 255, 0.04) !important;
+    }
+
+    .revised-badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: rgba(88, 166, 255, 0.15);
+      color: var(--accent);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .mermaid-container {
+      background: var(--bg-surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px;
+      margin: 12px 0;
+      overflow-x: auto;
+    }
+
+    .mermaid-container svg {
+      max-width: 100%;
+      height: auto;
+    }
+    /* Terminal panel (TT-127) */
+    .terminal-panel {
+      width: 460px;
+      min-width: 240px;
+      background: var(--bg-surface);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: width 0.2s ease, min-width 0.2s ease;
+    }
+
+    .terminal-panel.collapsed {
+      width: 0 !important;
+      min-width: 0 !important;
+      overflow: hidden;
+    }
+
+    .terminal-panel.collapsed > * {
+      display: none;
+    }
+
+    .terminal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    .terminal-header .term-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .term-status {
+      font-size: 10px;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border-radius: 3px;
+      background: var(--bg-surface-2);
+      color: var(--text-dim);
+    }
+
+    .term-status.connected {
+      color: var(--green);
+      background: var(--green-bg);
+    }
+
+    .term-status.error {
+      color: var(--red);
+      background: var(--red-bg);
+    }
+
+    .terminal-host {
+      flex: 1;
+      min-height: 0;
+      padding: 6px 8px 8px 8px;
+      overflow: hidden;
+    }
+
+    .terminal-host .xterm {
+      height: 100%;
+    }
+
+    /* Browser → terminal handoff footer (TT-130) */
+    .handoff-bar {
+      padding: 8px 12px;
+      background: var(--bg-surface);
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    .handoff-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .handoff-label {
+      color: var(--text-dim);
+      font-weight: 600;
+    }
+
+    .handoff-sid {
+      flex: 1;
+      min-width: 0;
+      padding: 2px 6px;
+      border-radius: 3px;
+      background: var(--bg-surface-2);
+      color: var(--text);
+      font-size: 11px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .handoff-btn {
+      padding: 4px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text);
+      background: var(--bg-surface-2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .handoff-btn:hover:not(:disabled) {
+      background: var(--bg-surface);
+      border-color: var(--text-dim);
+    }
+
+    .handoff-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .handoff-status {
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--text-dim);
+      min-height: 14px;
+    }
+
+    .handoff-status.done {
+      color: var(--green);
+    }
+
+    .handoff-status-cmd {
+      display: block;
+      margin-top: 4px;
+      padding: 4px 8px;
+      background: var(--bg-surface-2);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      user-select: all;
+      white-space: nowrap;
+      overflow-x: auto;
+    }
+
+    /* Send to Claude button (TT-127) */
+    .send-claude-btn {
+      margin: 12px 16px 16px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #0d1117;
+      background: var(--accent);
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      cursor: pointer;
+      transition: filter 0.15s;
+      font-family: inherit;
+    }
+
+    .send-claude-btn:hover {
+      filter: brightness(1.1);
+    }
+
+    .send-claude-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .send-claude-btn.sent {
+      background: var(--green);
+      border-color: var(--green);
+    }
+  </style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+</head>
+
+<body>
+
+  <div class="topbar">
+    <div class="topbar-toggles">
+      <button class="collapse-toggle" id="leftToggle" title="Toggle sections">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <rect x="1" y="1" width="4" height="14" rx="1" opacity="0.9" />
+          <rect x="7" y="1" width="8" height="14" rx="1" opacity="0.3" />
+        </svg>
+      </button>
+    </div>
+    <h1>Plan-review resume detection</h1>
+    <div class="stats" id="stats"></div>
+    <div class="topbar-toggles">
+      <button class="collapse-toggle" id="termToggle" title="Toggle terminal">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M2 3h12v10H2V3zm1 1v8h10V4H3z" opacity="0.6"/>
+          <path d="M4 6l2 2-2 2M7 10h3" stroke="currentColor" stroke-width="1" fill="none" opacity="0.9"/>
+        </svg>
+      </button>
+      <button class="collapse-toggle" id="rightToggle" title="Toggle feedback">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <rect x="1" y="1" width="8" height="14" rx="1" opacity="0.3" />
+          <rect x="11" y="1" width="4" height="14" rx="1" opacity="0.9" />
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="nav" id="nav"></div>
+    <div class="resize-handle" id="leftHandle"></div>
+    <div class="doc-panel" id="docPanel"></div>
+    <div class="resize-handle" id="termHandle"></div>
+    <div class="terminal-panel" id="termPanel">
+      <div class="terminal-header">
+        <span class="term-title">
+          <svg width="14" height="14" viewBox="0 6.603 1192.672 1193.397" fill="#d97757" aria-hidden="true">
+            <path d="m233.96 800.215 234.684-131.678 3.947-11.436-3.947-6.363h-11.436l-39.221-2.416-134.094-3.624-116.296-4.832-112.67-6.04-28.35-6.04-26.577-35.035 2.738-17.477 23.84-16.027 34.147 2.98 75.463 5.155 113.235 7.812 82.147 4.832 121.692 12.644h19.329l2.738-7.812-6.604-4.832-5.154-4.832-117.182-79.41-126.845-83.92-66.443-48.321-35.92-24.484-18.12-22.953-7.813-50.093 32.618-35.92 43.812 2.98 11.195 2.98 44.375 34.147 94.792 73.37 123.786 91.167 18.12 15.06 7.249-5.154.886-3.624-8.135-13.61-67.329-121.692-71.838-123.785-31.974-51.302-8.456-30.765c-2.98-12.645-5.154-23.275-5.154-36.242l37.127-50.416 20.537-6.604 49.53 6.604 20.86 18.121 30.765 70.39 49.852 110.818 77.315 150.684 22.631 44.698 12.08 41.396 4.51 12.645h7.813v-7.248l6.362-84.886 11.759-104.215 11.436-134.094 3.946-37.772 18.685-45.262 37.127-24.482 28.994 13.852 23.839 34.148-3.303 22.067-14.174 92.134-27.785 144.323-18.121 96.644h10.55l12.08-12.08 48.887-64.913 82.147-102.685 36.242-40.752 42.282-45.02 27.14-21.423h51.303l37.772 56.135-16.913 57.986-52.832 67.007-43.812 56.779-62.82 84.563-39.22 67.651 3.623 5.396 9.343-.886 141.906-30.201 76.671-13.852 91.49-15.705 41.396 19.329 4.51 19.65-16.269 40.189-97.852 24.16-114.764 22.954-170.9 40.43-2.093 1.53 2.416 2.98 76.993 7.248 32.94 1.771h80.617l150.12 11.195 39.222 25.933 23.517 31.732-3.946 24.16-60.403 30.766-81.503-19.33-190.228-45.26-65.235-16.27h-9.02v5.397l54.362 53.154 99.624 89.96 124.752 115.973 6.362 28.671-16.027 22.63-16.912-2.415-109.611-82.47-42.282-37.127-95.758-80.618h-6.363v8.456l22.067 32.296 116.537 175.167 6.04 53.719-8.456 17.476-30.201 10.55-33.181-6.04-68.215-95.758-70.39-107.84-56.778-96.644-6.926 3.947-33.503 360.886-15.705 18.443-36.243 13.852-30.201-22.953-16.027-37.127 16.027-73.37 19.329-95.758 15.704-76.107 14.175-94.55 8.456-31.41-.563-2.094-6.927.886-71.275 97.852-108.402 146.497-85.772 91.812-20.537 8.134-35.597-18.443 3.301-32.94 19.893-29.315 118.712-151.007 71.597-93.583 46.228-54.04-.322-7.813h-2.738l-315.302 204.725-56.135 7.248-24.16-22.63 2.98-37.128 11.435-12.08 94.792-65.236-.322.323z"/>
+          </svg>
+          Claude Opus 4.7
+        </span>
+        <span class="term-status" id="termStatus">connecting…</span>
+      </div>
+      <div class="terminal-host" id="termHost"></div>
+      <div class="handoff-bar" id="handoffBar">
+        <div class="handoff-row">
+          <span class="handoff-label">Session:</span>
+          <code class="handoff-sid" id="handoffSid">—</code>
+          <button class="handoff-btn" id="handoffBtn" type="button" title="Copy resume command and release the browser session">Hand off to terminal</button>
+        </div>
+        <div class="handoff-status" id="handoffStatus" aria-live="polite"></div>
+      </div>
+    </div>
+    <div class="resize-handle" id="rightHandle"></div>
+    <div class="right-panel" id="rightPanel">
+      <div class="right-panel-header">
+        <span>Review Feedback</span>
+        <span id="feedbackCount" style="font-size:11px;color:var(--text-dim)"></span>
+      </div>
+      <div class="filter-tabs" id="filterTabs">
+        <div class="filter-tab active" data-filter="all">All</div>
+        <div class="filter-tab" data-filter="approved">Approved</div>
+        <div class="filter-tab" data-filter="revision">Needs Revision</div>
+        <div class="filter-tab" data-filter="question">Questions</div>
+      </div>
+      <div class="right-panel-content" id="feedbackList"></div>
+      <button class="send-claude-btn" id="sendClaudeBtn" onclick="sendToClaude()" disabled>Send to Claude</button>
+    </div>
+  </div>
+
+  <script>
+    // ============================================================
+    // CONTENT: Replace this array with your plan sections.
+    // Each section needs: id, title, content (markdown-like string).
+    // Optional: revised (boolean) to highlight as updated.
+    // ============================================================
+    const docSections = [
+      {
+        id: "context",
+        title: "Context: why this change",
+        content: `Today, \`/plan-review TT-128\` deterministically writes to \`<output-dir>/TT-128-<slug>-review.html\`. A second invocation with the same ticket **silently overwrites** the prior HTML — the \`CLAUDE_SESSION\` constant is re-embedded with the current session, plan content is replaced from the new conversation, and any approval state in browser localStorage is orphaned if the slug changes.
+
+**User scenario:** "We may have the occasion where we have been working on a plan, we leave it and want to resume at some point in the future. Lets assume the session is still in memory. Will the plugin be able to pickup where we left off if given the same Jira? Or will it overwrite the old plan?"
+
+**What the change does.** On \`/plan-review <ticket>\`, detect a matching prior HTML. If one exists, ask the user: **Resume** / **Overwrite** / **Cancel**. On resume:
+
+1. **Hydrate the main agent's context** by reading the prior HTML and loading \`docSections\` + \`priorApprovals\` back into conversation — so the agent knows *what* it's resuming and which sections are already locked in.
+2. **Refresh \`CLAUDE_SESSION\`** in the file to the current session id so the PTY bridge works.
+3. **Preserve** plan content, \`priorApprovals\`, and \`PLAN_NAME\` in the file so browser review state stays attached to the same localStorage key.
+
+**Why hydrate into context** (resolved from a reviewer question): without step 1, resume is purely a file-serving operation — the agent serves a URL but is blind to the content. Reviewer asks "remind me what section 3 said?" and the agent has to Read the file from cold. With hydration, resume behaves like an actual resume: the agent can summarize what's on the page ("N-section plan on X; K sections previously approved, M flagged for revision") and meet the reviewer mid-conversation.
+
+**Design decisions already resolved:**
+- **Placement:** integrate detection into the existing \`/plan-review\` skill. One command surface.
+- **Resume semantics:** hydrate context + refresh session id in place; keep plan content and prior approvals.`
+      },
+      {
+        id: "files-to-modify",
+        title: "Files to modify",
+        content: `- \`plugins/plan-review/skills/plan-review/SKILL.md\` — add new step "1a. Detect prior plan" between argument parsing and output-directory resolution; add "Resume: hydrate and refresh" subsection; update "How It Works" overview to mention the detection branch.
+- \`plugins/plan-review/.claude-plugin/plugin.json\` — version bump \`0.2.1\` → \`0.2.2\` (per reviewer).
+
+**Not modified:**
+- \`bin/devserver.py\` — the PTY bridge already spawns \`claude --resume <sid>\`; the rewritten \`CLAUDE_SESSION\` constant is all it needs.
+- \`assets/review-template.html\` — template is unchanged; we don't re-render the template on resume, we edit the existing output file in place.
+- \`hooks/hooks.json\` — the \`UserPromptSubmit\` hook continues to inject the session id; resume just reads the current value instead of embedding it for the first time.
+
+**Verified** via \`git pull --ff-only\` on \`main\`: both repo and cached plugin agree on current version \`0.2.1\`.`
+      },
+      {
+        id: "design-detection-step",
+        title: "Design: new detection step (1a)",
+        content: `Inserted **after** step 1 "Parse arguments" and **before** step 2 "Resolve output directory". After the output dir is resolved but before any write, glob for matching prior files:
+
+\`\`\`bash
+OUT_DIR="\${PLAN_REVIEW_DIR:-.plan-review}"
+shopt -s nullglob
+PRIOR=( "$OUT_DIR"/"$TICKET"-*-review.html )
+shopt -u nullglob
+\`\`\`
+
+### Why a glob, not an exact filename match
+
+The exact filename is \`<ticket>-<slugified-title>-review.html\`. If the user tweaked the plan title between runs (e.g., "Add OAuth support" → "Add OAuth login"), the new slug wouldn't match the old file — so exact-match detection would miss it and silently overwrite. Glob on \`<ticket>-*-review.html\` catches prior runs regardless of slug drift.
+
+### Branching
+
+- **Zero matches** → proceed with the current write-new flow unchanged. No user prompt.
+- **One match** → prompt the user (see the "User-facing prompt" section).
+- **Multiple matches** → list them with mtimes and ask which to resume, plus overwrite/cancel options. Rare; only happens if the user tweaked the title *and* never deleted the stale file.
+
+### Why this step runs before step 2 in the current numbering
+
+The output dir must be resolved first (to know where to glob), but we must branch before step 3 (filename construction) and step 4 (template read) — on resume, we don't read the template and we don't construct a new filename.`
+      },
+      {
+        id: "design-resume-semantics",
+        title: "Design: resume = hydrate context + refresh session id",
+        content: `When the user picks **Resume**:
+
+1. **Hydrate context.** Read the prior HTML. Locate the \`const docSections = [...];\` and \`const priorApprovals = {...};\` blocks and load them into the main agent's conversation context. Surface a short summary to the user — e.g., *"Resumed 7-section plan: [section titles]; 4 previously approved, 1 flagged for revision. Where do you want to pick up?"*
+2. **Refresh session id.** Read the current session id from the \`plan-review-session-id: <sid>\` line injected by the \`UserPromptSubmit\` hook (same source step 5a uses for the write-new path). Rewrite **only** the \`CLAUDE_SESSION = "..."\` JS constant in the prior HTML. Replace the quoted value in place.
+3. **Error on malformed file.** If the \`CLAUDE_SESSION\` constant can't be found (file was edited externally, corrupted, or pre-session-id plugin version), surface the error and ask whether to regenerate from scratch. **Do not silently overwrite.**
+4. **(Re)start the devserver** per the existing step 9 logic.
+5. **Return the URL** per the existing step 10 format.
+
+### What is intentionally NOT rewritten in the file
+
+| Constant | Why preserved |
+|---|---|
+| \`docSections\` | Plan content from the prior run is what the user wants back |
+| \`priorApprovals\` | Reviewer's prior-round approve/revise decisions |
+| \`PLAN_NAME\` | The browser localStorage key is \`review-state:<PLAN_NAME>\` — keeping PLAN_NAME stable is what keeps the reviewer's section-level approve/revise/question marks attached |
+| \`<title>\` / \`<h1>\` | Derived from PLAN_NAME; no reason to touch |
+
+### Implementation notes
+
+- **Hydration is prompt-level, not code.** The skill instructs the agent to Read the HTML, locate the \`docSections\` and \`priorApprovals\` JS literals, and internalize them. No JSON/HTML parser needed — the agent reads JS literals directly.
+- **Session id rewrite is single-line anchor replacement.** Match \`const CLAUDE_SESSION = "\` + anything + \`";\` and replace the quoted value. No template re-render, no JSON/HTML parsing of the rest of the file.
+- **Cost of hydration.** The prior plan's full text enters context. For a large plan with many long sections, this is a deliberate cost paid in exchange for a conversational resume. Acceptable: resume is user-initiated and infrequent, and the reviewer explicitly asked for this behavior (*"if we're resuming, you should know what you're resuming"*).`
+      },
+      {
+        id: "user-facing-prompt",
+        title: "User-facing prompt (one-match case)",
+        content: `Exact text the skill will show when exactly one matching prior file is found:
+
+> Found a prior plan for \`<ticket>\` at \`<path>\` (modified \`<mtime>\`).
+>
+> - **Resume** — keep the plan content and your prior review marks; refresh the embedded session id so the terminal bridge works.
+> - **Overwrite** — replace with a freshly generated plan from the current conversation. Prior review marks for this filename remain in the browser's localStorage.
+> - **Cancel** — do nothing.
+
+### Design notes
+
+- **mtime exposed** so the user can tell which plan they'd resume ("oh right, I worked on this two weeks ago").
+- **Overwrite description is honest** — it mentions that localStorage marks survive, because they do (keyed by \`PLAN_NAME\`, which stays the same if the user keeps the title). This manages expectation that overwrite = "really a clean slate."
+- **Cancel is explicit** — no silent "do nothing" fallback. The user should always know they can back out.
+
+### Multi-match prompt
+
+When the glob returns >1 files (rare, slug drift case), list each with path + mtime, number them, and ask the user to choose: \`1\`, \`2\`, ..., \`overwrite\`, \`cancel\`. Resume path then operates on the chosen file.`
+      },
+      {
+        id: "edge-cases",
+        title: "Edge cases handled",
+        content: `- **Original authoring session is gone.** User comes back weeks later; the original Claude session is no longer resumable on disk. The refreshed \`CLAUDE_SESSION\` points at the **current** session, so the embedded terminal spawns \`claude --resume <current-sid>\` successfully.
+- **Multiple matching files** (slug drift + stale file). Skill lists them and asks which to resume.
+- **\`CLAUDE_SESSION\` constant not found** in prior file (hand-edited, corrupted, or from a pre-session-id version of the plugin). Skill surfaces the error; does **not** touch the file; asks whether to regenerate.
+- **\`PLAN_REVIEW_DIR\` override.** Glob runs against the resolved output dir — same variable resolution as the write path, so override is honored automatically.
+- **Devserver port file.** Resume reuses \`.devserver-port\` the same way a fresh write does (step 9 already handles "existing devserver on recorded port").
+- **Session id hook not fired.** Already handled by step 5a's existing error path — resume uses the same extraction logic, so the same safety check applies.
+
+### Not handled (out of scope)
+
+- **Porting review state between files.** If the user overwrites and the slug changes, the old localStorage key is orphaned; no migration. Acceptable: overwrite is explicitly destructive, user is told so.
+- **Server-side persistence of approval state.** Review marks stay in browser localStorage. Adding disk-backed review state is a separate, larger change.`
+      },
+      {
+        id: "verification",
+        title: "Verification",
+        content: `No new Python tests — the resume logic is prompt-level, not code. Existing \`tests/test_devserver.py\` (36 tests) continues to cover the devserver/PTY surface unchanged.
+
+### Manual verification checklist
+
+1. **Fresh run, no prior plan.** In a project with no \`.plan-review/\`, invoke \`/plan-review TT-999\`. Confirm: no resume prompt; skill writes a new file, starts devserver, returns URL.
+2. **Resume path.** Re-invoke \`/plan-review TT-999\`. Confirm:
+   - Skill surfaces prior file path and mtime.
+   - **Hydration:** skill replies with a summary like *"Resumed N-section plan: [titles]; K sections previously approved..."* — confirming the agent actually read the file into context, not just returned a URL. Follow up with "what does section X say?" and verify the agent answers from context without re-reading the file.
+   - Choosing **Resume** leaves \`docSections\`, \`priorApprovals\`, \`PLAN_NAME\`, \`<title>\` untouched in the file — \`diff\` before/after should show only the \`CLAUDE_SESSION\` line differs.
+   - Opening the returned URL and clicking "Send to Claude" delivers input to the **current** Claude session.
+   - Prior browser localStorage marks (approve/revise/question) remain visible on reload.
+3. **Overwrite path.** Choose **Overwrite**. Confirm file is fully regenerated (all four identifiers updated) and the prompt didn't silently swallow content.
+4. **Cancel path.** Choose **Cancel**. Confirm nothing is written and no devserver state changes.
+5. **Malformed prior file.** Manually remove the \`CLAUDE_SESSION = "..."\` line from a prior HTML; re-invoke with Resume. Confirm skill surfaces an error rather than writing a broken file.
+6. **Multiple matches.** Create two \`TT-999-*-review.html\` files with different slugs. Re-invoke; confirm skill lists both and asks which to resume.
+7. **\`PLAN_REVIEW_DIR\` override.** Set \`PLAN_REVIEW_DIR=/tmp/pr-test\` and repeat steps 1–2 against that directory; confirm detection honors the override.`
+      }
+    ];
+
+    // ============================================================
+    // OPTIONAL: Pre-approved sections from prior review rounds.
+    // Map section id -> status ("approved", "revision", "question").
+    // ============================================================
+    const priorApprovals = {
+      "context": "approved",
+      "files-to-modify": "approved",
+      "design-detection-step": "approved",
+      "design-resume-semantics": "approved",
+      "user-facing-prompt": "approved",
+      "edge-cases": "approved",
+      "verification": "approved",
+    };
+
+    // ============================================================
+    // PLAN NAME: Update this string for the copy-to-prompt output.
+    // ============================================================
+    const PLAN_NAME = "Plan-review resume detection";
+    // Populated by the plan-review skill at HTML-generation time with the
+    // authoring session's id. The terminal panel uses this to spawn
+    // `claude --resume <sid>` via the devserver's /api/claude?session= endpoint.
+    const CLAUDE_SESSION = "be294ce7-7579-4f63-8036-20e2c11b77e4";
+
+    // Persistence — save/restore review state across sessions
+    const STORAGE_KEY = 'review-state:' + PLAN_NAME;
+    const LAYOUT_KEY = 'review-layout:' + PLAN_NAME;
+
+    function saveToStorage() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          sections: state.sections.map(s => ({ id: s.id, status: s.status, comment: s.comment })),
+          activeSection: state.activeSection,
+          activeFilter: state.activeFilter
+        }));
+      } catch (e) { }
+    }
+
+    function loadFromStorage() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        (data.sections || []).forEach(saved => {
+          const s = state.sections.find(s => s.id === saved.id);
+          if (s) { s.status = saved.status || 'pending'; s.comment = saved.comment || ''; }
+        });
+        if (data.activeSection) state.activeSection = data.activeSection;
+        if (data.activeFilter) state.activeFilter = data.activeFilter;
+      } catch (e) { }
+    }
+
+    // State
+    const state = {
+      sections: docSections.map(s => ({
+        ...s,
+        status: priorApprovals[s.id] || 'pending',
+        comment: ''
+      })),
+      activeSection: docSections[0]?.id || '',
+      activeFilter: 'all'
+    };
+
+    // Render markdown-like content to HTML
+    function renderMarkdown(text) {
+      let html = '';
+      const lines = text.split('\n');
+      let inCode = false;
+      let codeLang = '';
+      let codeLines = [];
+      let inList = false;
+      let listTag = 'ul';
+      let inTable = false;
+      let tableRows = [];
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        if (line.trim().startsWith('```')) {
+          if (inCode) {
+            if (codeLang === 'mermaid') {
+              html += '<div class="mermaid-container"><pre class="mermaid">' + codeLines.join('\n') + '</pre></div>';
+            } else {
+              html += '<pre><code>' + codeLines.join('\n').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</code></pre>';
+            }
+            codeLines = [];
+            inCode = false;
+            codeLang = '';
+          } else {
+            if (inList) { html += '</' + listTag + '>'; inList = false; }
+            if (inTable) { html += renderTable(tableRows); inTable = false; tableRows = []; }
+            codeLang = line.trim().slice(3).trim().toLowerCase();
+            inCode = true;
+          }
+          continue;
+        }
+        if (inCode) { codeLines.push(line); continue; }
+
+        if (line.trim().startsWith('|')) {
+          if (inList) { html += '</' + listTag + '>'; inList = false; }
+          if (!inTable) inTable = true;
+          if (!line.trim().match(/^\|[\s-|]+\|$/)) {
+            tableRows.push(line);
+          }
+          continue;
+        } else if (inTable) {
+          html += renderTable(tableRows);
+          inTable = false;
+          tableRows = [];
+        }
+
+        if (line.trim() === '') {
+          if (inList) {
+            // Look ahead: if next non-blank line continues the list, keep it open
+            let keepList = false;
+            for (let j = i + 1; j < lines.length; j++) {
+              const next = lines[j].trim();
+              if (next === '') continue;
+              if (listTag === 'ol' && next.match(/^\d+\.\s/)) keepList = true;
+              if (listTag === 'ul' && (next.startsWith('- ') || next.startsWith('* '))) keepList = true;
+              break;
+            }
+            if (!keepList) { html += '</' + listTag + '>'; inList = false; }
+          }
+          continue;
+        }
+
+        if (line.startsWith('### ')) {
+          if (inList) { html += '</' + listTag + '>'; inList = false; }
+          html += '<h4 style="font-size:14px;font-weight:600;color:var(--text);margin:16px 0 8px">' + inlineFormat(line.slice(4)) + '</h4>';
+          continue;
+        }
+
+        if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
+          if (inList && listTag !== 'ul') { html += '</' + listTag + '>'; inList = false; }
+          if (!inList) { listTag = 'ul'; html += '<ul>'; inList = true; }
+          html += '<li>' + inlineFormat(line.trim().slice(2)) + '</li>';
+          continue;
+        }
+        if (line.trim().match(/^\d+\.\s/)) {
+          if (inList && listTag !== 'ol') { html += '</' + listTag + '>'; inList = false; }
+          if (!inList) { listTag = 'ol'; html += '<ol>'; inList = true; }
+          html += '<li>' + inlineFormat(line.trim().replace(/^\d+\.\s/, '')) + '</li>';
+          continue;
+        }
+
+        if (inList) { html += '</' + listTag + '>'; inList = false; }
+        html += '<p>' + inlineFormat(line) + '</p>';
+      }
+
+      if (inCode) html += '<pre><code>' + codeLines.join('\n').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</code></pre>';
+      if (inList) html += '</' + listTag + '>';
+      if (inTable) html += renderTable(tableRows);
+
+      return html;
+    }
+
+    function renderTable(rows) {
+      if (rows.length === 0) return '';
+      let html = '<table>';
+      rows.forEach((row, idx) => {
+        const cells = row.split('|').filter(c => c.trim() !== '');
+        const tag = idx === 0 ? 'th' : 'td';
+        html += '<tr>' + cells.map(c => `<${tag}>${inlineFormat(c.trim())}</${tag}>`).join('') + '</tr>';
+      });
+      html += '</table>';
+      return html;
+    }
+
+    function inlineFormat(text) {
+      return text
+        .replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color:var(--accent);text-decoration:none">$1</a>')
+        .replace(/\\`/g, '`');
+    }
+
+    // Render navigation
+    function renderNav() {
+      const nav = document.getElementById('nav');
+      nav.innerHTML = state.sections.map(s => {
+        const icon = s.status === 'approved' ? '<span style="color:var(--green)">&#10003;</span>'
+          : s.status === 'revision' ? '<span style="color:var(--red)">&#9998;</span>'
+            : s.status === 'question' ? '<span style="color:var(--purple)">?</span>'
+              : '<span style="color:var(--text-dim)">&bull;</span>';
+        return `<div class="nav-item ${s.id === state.activeSection ? 'active' : ''}"
+                 onclick="navigateTo('${s.id}')">
+      <span class="status-icon">${icon}</span>
+      <span class="label">${s.title}</span>
+      ${s.revised ? '<span style="font-size:9px;color:var(--accent);font-weight:700">REV</span>' : ''}
+    </div>`;
+      }).join('');
+    }
+
+    // Render document
+    function renderDoc() {
+      const panel = document.getElementById('docPanel');
+      panel.innerHTML = state.sections.map(s => {
+        const borderColor = s.status === 'approved' ? 'var(--green)'
+          : s.status === 'revision' ? 'var(--red)'
+            : s.status === 'question' ? 'var(--purple)' : 'transparent';
+        const bgColor = s.status === 'approved' ? 'var(--green-bg)'
+          : s.status === 'revision' ? 'var(--red-bg)'
+            : s.status === 'question' ? 'rgba(188,140,255,0.06)' : 'transparent';
+
+        const revisedAndPending = s.revised && s.status === 'pending';
+        const revisedClass = revisedAndPending ? ' revised' : '';
+        return `<div class="section${revisedClass}" id="section-${s.id}"
+                 style="border-left: 3px solid ${revisedAndPending ? 'var(--accent)' : borderColor}; background: ${revisedAndPending ? 'rgba(88,166,255,0.04)' : bgColor};">
+      <div class="section-header">
+        <h2>${s.title}</h2>
+        ${s.revised ? '<span class="revised-badge">Revised</span>' : ''}
+      </div>
+      <div class="section-content">${renderMarkdown(s.content)}</div>
+      <div class="review-bar">
+        <button class="review-btn ${s.status === 'approved' ? 'active-approved' : ''}"
+                onclick="setStatus('${s.id}','approved')">Approve</button>
+        <button class="review-btn ${s.status === 'revision' ? 'active-revision' : ''}"
+                onclick="setStatus('${s.id}','revision')">Needs Revision</button>
+        <button class="review-btn ${s.status === 'question' ? 'active-question' : ''}"
+                onclick="setStatus('${s.id}','question')">Question</button>
+        <button class="review-btn" onclick="toggleComment('${s.id}')"
+                style="margin-left:auto">Comment</button>
+      </div>
+      <div class="comment-area" id="comment-${s.id}">
+        ${s.comment
+            ? `<div class="existing-comment">${s.comment.replace(/</g, '&lt;').replace(/\n/g, '<br>')}
+               <button class="edit-btn" onclick="editComment('${s.id}')">edit</button></div>`
+            : `<textarea placeholder="Add your feedback for this section..."
+                      onblur="saveComment('${s.id}', this.value)"
+                      id="textarea-${s.id}"></textarea>`
+          }
+      </div>
+    </div>`;
+      }).join('');
+    }
+
+    // Render stats
+    function renderStats() {
+      const counts = { pending: 0, approved: 0, revision: 0, question: 0 };
+      state.sections.forEach(s => counts[s.status]++);
+      document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="dot dot-approved"></div>${counts.approved} Approved</div>
+    <div class="stat"><div class="dot dot-pending"></div>${counts.pending} Pending</div>
+    <div class="stat"><div class="dot dot-revision"></div>${counts.revision} Needs Revision</div>
+    <div class="stat"><div class="dot dot-question"></div>${counts.question} Questions</div>
+  `;
+    }
+
+    // Render feedback panel
+    function renderFeedback() {
+      const list = document.getElementById('feedbackList');
+      const filtered = state.sections.filter(s => {
+        if (state.activeFilter === 'all') return s.status !== 'pending';
+        return s.status === state.activeFilter;
+      });
+
+      const count = state.sections.filter(s => s.status !== 'pending').length;
+      document.getElementById('feedbackCount').textContent = count > 0 ? `${count} reviewed` : '';
+
+      if (filtered.length === 0) {
+        list.innerHTML = `<div class="prompt-placeholder">
+      ${state.activeFilter === 'all'
+            ? 'Review sections by clicking Approve, Needs Revision, or Question. Your feedback will appear here.'
+            : 'No sections with this status yet.'}
+    </div>`;
+        return;
+      }
+
+      list.innerHTML = filtered.map(s => `
+    <div class="feedback-item" onclick="navigateTo('${s.id}')" style="cursor:pointer">
+      <div class="fb-section">
+        <span class="fb-status ${s.status}">${s.status === 'approved' ? 'APPROVED' : s.status === 'revision' ? 'REVISION' : 'QUESTION'}</span>
+        ${s.title}
+      </div>
+      ${s.comment ? `<div class="fb-comment">"${s.comment}"</div>` : ''}
+    </div>
+  `).join('');
+    }
+
+    // Actions
+    function navigateTo(id) {
+      state.activeSection = id;
+      saveToStorage();
+      renderNav();
+      var el = document.getElementById('section-' + id);
+      var panel = document.getElementById('docPanel');
+      panel.scrollTo({ top: el.offsetTop - panel.offsetTop, behavior: 'smooth' });
+    }
+
+    function setStatus(id, status) {
+      const section = state.sections.find(s => s.id === id);
+      if (section.status === status) {
+        section.status = 'pending';
+      } else {
+        section.status = status;
+        if (status === 'revision' || status === 'question') {
+          setTimeout(() => {
+            const area = document.getElementById('comment-' + id);
+            if (area) area.classList.add('visible');
+          }, 50);
+        }
+      }
+      renderAll();
+      saveToStorage();
+    }
+
+    function toggleComment(id) {
+      const area = document.getElementById('comment-' + id);
+      area.classList.toggle('visible');
+      if (area.classList.contains('visible')) {
+        const ta = document.getElementById('textarea-' + id);
+        if (ta) ta.focus();
+      }
+    }
+
+    function saveComment(id, value) {
+      const section = state.sections.find(s => s.id === id);
+      section.comment = value.trim();
+      renderAll();
+      saveToStorage();
+    }
+
+    function editComment(id) {
+      const section = state.sections.find(s => s.id === id);
+      const area = document.getElementById('comment-' + id);
+      area.innerHTML = `<textarea placeholder="Edit your feedback..."
+    onblur="saveComment('${id}', this.value)"
+    id="textarea-${id}">${section.comment}</textarea>`;
+      area.classList.add('visible');
+      document.getElementById('textarea-' + id).focus();
+    }
+
+    function generatePrompt() {
+      const approved = state.sections.filter(s => s.status === 'approved');
+      const revision = state.sections.filter(s => s.status === 'revision');
+      const questions = state.sections.filter(s => s.status === 'question');
+
+      if (approved.length === 0 && revision.length === 0 && questions.length === 0) {
+        return '';
+      }
+
+      let prompt = `Here is my review of the ${PLAN_NAME} plan:\n\n`;
+
+      if (approved.length > 0) {
+        prompt += `## Approved Sections (${approved.length}/${state.sections.length})\n`;
+        approved.forEach(s => {
+          prompt += `- **${s.title}**: Approved`;
+          if (s.comment) prompt += ` — ${s.comment}`;
+          prompt += '\n';
+        });
+        prompt += '\n';
+      }
+
+      if (revision.length > 0) {
+        prompt += `## Needs Revision (${revision.length})\n`;
+        revision.forEach(s => {
+          prompt += `- **${s.title}**`;
+          if (s.comment) prompt += `: ${s.comment}`;
+          else prompt += ': (no specific feedback provided)';
+          prompt += '\n';
+        });
+        prompt += '\n';
+      }
+
+      if (questions.length > 0) {
+        prompt += `## Questions (${questions.length})\n`;
+        questions.forEach(s => {
+          prompt += `- **${s.title}**`;
+          if (s.comment) prompt += `: ${s.comment}`;
+          else prompt += ': (question not specified)';
+          prompt += '\n';
+        });
+        prompt += '\n';
+      }
+
+      const remaining = state.sections.filter(s => s.status === 'pending');
+      if (remaining.length > 0) {
+        prompt += `## Not Yet Reviewed (${remaining.length})\n`;
+        remaining.forEach(s => prompt += `- ${s.title}\n`);
+      }
+
+      return prompt;
+    }
+
+    function copyPrompt() {
+      const prompt = generatePrompt();
+      if (!prompt) return;
+      const btn = document.getElementById('copyBtn');
+      function onSuccess() {
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = 'Copy Feedback as Prompt'; btn.classList.remove('copied'); }, 2000);
+      }
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(prompt).then(onSuccess).catch(fallbackCopy);
+      } else {
+        fallbackCopy();
+      }
+      function fallbackCopy() {
+        const ta = document.createElement('textarea');
+        ta.value = prompt;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); onSuccess(); } catch (e) { btn.textContent = 'Copy failed'; }
+        document.body.removeChild(ta);
+      }
+    }
+
+    // Filter tabs
+    document.getElementById('filterTabs').addEventListener('click', e => {
+      const tab = e.target.closest('.filter-tab');
+      if (!tab) return;
+      state.activeFilter = tab.dataset.filter;
+      document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      renderFeedback();
+      saveToStorage();
+    });
+
+    function renderAll() {
+      renderNav();
+      renderDoc();
+      renderStats();
+      renderFeedback();
+      document.querySelectorAll('.mermaid[data-processed]').forEach(el => el.removeAttribute('data-processed'));
+      if (typeof mermaid !== 'undefined') mermaid.run();
+    }
+
+    // Resizable & collapsible panels (mouse + touch)
+    let __fitTerminal = () => { };
+    (function () {
+      const nav = document.getElementById('nav');
+      const rightPanel = document.getElementById('rightPanel');
+      const termPanel = document.getElementById('termPanel');
+      const leftHandle = document.getElementById('leftHandle');
+      const rightHandle = document.getElementById('rightHandle');
+      const termHandle = document.getElementById('termHandle');
+      const leftToggle = document.getElementById('leftToggle');
+      const rightToggle = document.getElementById('rightToggle');
+      const termToggle = document.getElementById('termToggle');
+
+      let dragging = null;
+      let navWidth = 240;
+      let rightWidth = 360;
+      let termWidth = 460;
+
+      // Restore saved layout
+      const savedLayout = (() => { try { return JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}'); } catch (e) { return {}; } })();
+      if (savedLayout.navWidth) navWidth = savedLayout.navWidth;
+      if (savedLayout.rightWidth) rightWidth = savedLayout.rightWidth;
+      if (savedLayout.termWidth) termWidth = savedLayout.termWidth;
+      if (savedLayout.navCollapsed) nav.classList.add('collapsed');
+      else nav.style.width = navWidth + 'px';
+      if (savedLayout.rightCollapsed) rightPanel.classList.add('collapsed');
+      else rightPanel.style.width = rightWidth + 'px';
+      // Terminal defaults to closed; only expand if user previously opened it.
+      if (savedLayout.termCollapsed === false) termPanel.style.width = termWidth + 'px';
+      else termPanel.classList.add('collapsed');
+
+      function saveLayout() {
+        try {
+          localStorage.setItem(LAYOUT_KEY, JSON.stringify({
+            navWidth, rightWidth, termWidth,
+            navCollapsed: nav.classList.contains('collapsed'),
+            rightCollapsed: rightPanel.classList.contains('collapsed'),
+            termCollapsed: termPanel.classList.contains('collapsed')
+          }));
+        } catch (e) { }
+      }
+
+      function updateToggles() {
+        const navCollapsed = nav.classList.contains('collapsed');
+        const rightCollapsed = rightPanel.classList.contains('collapsed');
+        const termCollapsed = termPanel.classList.contains('collapsed');
+        leftToggle.title = navCollapsed ? 'Show sections' : 'Hide sections';
+        leftToggle.classList.toggle('panel-collapsed', navCollapsed);
+        rightToggle.title = rightCollapsed ? 'Show feedback' : 'Hide feedback';
+        rightToggle.classList.toggle('panel-collapsed', rightCollapsed);
+        termToggle.title = termCollapsed ? 'Show terminal' : 'Hide terminal';
+        termToggle.classList.toggle('panel-collapsed', termCollapsed);
+      }
+
+      function toggleNav(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (nav.classList.contains('collapsed')) {
+          nav.classList.remove('collapsed');
+          nav.style.width = navWidth + 'px';
+        } else {
+          navWidth = nav.offsetWidth;
+          nav.classList.add('collapsed');
+        }
+        updateToggles();
+        saveLayout();
+      }
+
+      function toggleRight(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (rightPanel.classList.contains('collapsed')) {
+          // Opening feedback — close terminal first AND inherit its width.
+          if (!termPanel.classList.contains('collapsed')) {
+            termWidth = termPanel.offsetWidth;
+            rightWidth = termWidth;
+            termPanel.classList.add('collapsed');
+          }
+          rightPanel.classList.remove('collapsed');
+          rightPanel.style.width = rightWidth + 'px';
+        } else {
+          rightWidth = rightPanel.offsetWidth;
+          rightPanel.classList.add('collapsed');
+        }
+        updateToggles();
+        saveLayout();
+      }
+
+      function toggleTerm(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (termPanel.classList.contains('collapsed')) {
+          // Opening terminal — close feedback first AND inherit its width.
+          if (!rightPanel.classList.contains('collapsed')) {
+            rightWidth = rightPanel.offsetWidth;
+            termWidth = rightWidth;
+            rightPanel.classList.add('collapsed');
+          }
+          termPanel.classList.remove('collapsed');
+          termPanel.style.width = termWidth + 'px';
+          setTimeout(__fitTerminal, 220);
+        } else {
+          termWidth = termPanel.offsetWidth;
+          termPanel.classList.add('collapsed');
+        }
+        updateToggles();
+        saveLayout();
+      }
+
+      let touchFiredLeft = false, touchFiredRight = false, touchFiredTerm = false;
+
+      leftToggle.addEventListener('touchend', e => { touchFiredLeft = true; toggleNav(e); }, { passive: false });
+      leftToggle.addEventListener('click', e => { if (touchFiredLeft) { touchFiredLeft = false; return; } toggleNav(e); });
+
+      rightToggle.addEventListener('touchend', e => { touchFiredRight = true; toggleRight(e); }, { passive: false });
+      rightToggle.addEventListener('click', e => { if (touchFiredRight) { touchFiredRight = false; return; } toggleRight(e); });
+
+      termToggle.addEventListener('touchend', e => { touchFiredTerm = true; toggleTerm(e); }, { passive: false });
+      termToggle.addEventListener('click', e => { if (touchFiredTerm) { touchFiredTerm = false; return; } toggleTerm(e); });
+
+      updateToggles();
+
+      // Drag resize (mouse)
+      function onDragStart(e, side) {
+        e.preventDefault();
+        dragging = side;
+        document.body.classList.add('resizing');
+        const handle = side === 'left' ? leftHandle : (side === 'term' ? termHandle : rightHandle);
+        handle.classList.add('dragging');
+      }
+
+      leftHandle.addEventListener('mousedown', e => onDragStart(e, 'left'));
+      termHandle.addEventListener('mousedown', e => onDragStart(e, 'term'));
+      rightHandle.addEventListener('mousedown', e => onDragStart(e, 'right'));
+
+      document.addEventListener('mousemove', e => {
+        if (!dragging) return;
+        applyDrag(e.clientX);
+      });
+
+      document.addEventListener('mouseup', endDrag);
+
+      // Drag resize (touch)
+      leftHandle.addEventListener('touchstart', e => { e.preventDefault(); onDragStart(e, 'left'); }, { passive: false });
+      termHandle.addEventListener('touchstart', e => { e.preventDefault(); onDragStart(e, 'term'); }, { passive: false });
+      rightHandle.addEventListener('touchstart', e => { e.preventDefault(); onDragStart(e, 'right'); }, { passive: false });
+
+      document.addEventListener('touchmove', e => {
+        if (!dragging) return;
+        e.preventDefault();
+        applyDrag(e.touches[0].clientX);
+      }, { passive: false });
+
+      document.addEventListener('touchend', endDrag);
+
+      function applyDrag(clientX) {
+        if (dragging === 'left') {
+          const w = Math.max(140, Math.min(400, clientX));
+          nav.classList.remove('collapsed');
+          nav.style.width = w + 'px';
+          navWidth = w;
+        } else if (dragging === 'right') {
+          const w = Math.max(200, Math.min(600, window.innerWidth - clientX));
+          rightPanel.classList.remove('collapsed');
+          rightPanel.style.width = w + 'px';
+          rightWidth = w;
+        } else if (dragging === 'term') {
+          // termHandle sits between doc and terminal; the terminal's width is
+          // (everything to the right of clientX) minus the right-panel width
+          // (when expanded) and the right resize handle (1px).
+          const rightTaken = rightPanel.classList.contains('collapsed') ? 0 : rightPanel.offsetWidth + 1;
+          const w = Math.max(240, Math.min(900, window.innerWidth - clientX - rightTaken));
+          termPanel.classList.remove('collapsed');
+          termPanel.style.width = w + 'px';
+          termWidth = w;
+          __fitTerminal();
+        }
+        updateToggles();
+      }
+
+      function endDrag() {
+        if (!dragging) return;
+        document.body.classList.remove('resizing');
+        leftHandle.classList.remove('dragging');
+        rightHandle.classList.remove('dragging');
+        termHandle.classList.remove('dragging');
+        dragging = null;
+        saveLayout();
+        __fitTerminal();
+      }
+
+      // Re-fit terminal on viewport changes
+      window.addEventListener('resize', () => __fitTerminal());
+    })();
+
+    // ============================================================
+    // TT-127: Terminal panel + Send to Claude
+    // Mounts xterm.js in #termHost, opens a websocket to the
+    // devserver's /api/claude endpoint (which spawns
+    // `claude --continue` in a PTY), and exposes sendToClaude()
+    // which writes the existing feedback bundle to that session.
+    // ============================================================
+    let __claudeWS = null;
+    let __claudeReady = false;
+    let __claudeTerm = null;
+    let __claudeFitAddon = null;
+
+    (function initClaudeTerminal() {
+      const host = document.getElementById('termHost');
+      const status = document.getElementById('termStatus');
+      const sendBtn = document.getElementById('sendClaudeBtn');
+      if (!host || typeof Terminal === 'undefined') return;
+
+      const term = new Terminal({
+        fontFamily: '"SF Mono", "Fira Code", "JetBrains Mono", monospace',
+        fontSize: 12,
+        lineHeight: 1.2,
+        theme: {
+          background: '#161b22',
+          foreground: '#e6edf3',
+          cursor: '#58a6ff',
+          selectionBackground: 'rgba(88, 166, 255, 0.35)',
+        },
+        cursorBlink: true,
+        scrollback: 5000,
+        convertEol: false,
+      });
+      const fitAddon = new FitAddon.FitAddon();
+      term.loadAddon(fitAddon);
+      term.open(host);
+      try { fitAddon.fit(); } catch (e) { }
+
+      __claudeTerm = term;
+      __claudeFitAddon = fitAddon;
+      __fitTerminal = () => {
+        if (document.getElementById('termPanel').classList.contains('collapsed')) return;
+        try { fitAddon.fit(); } catch (e) { }
+        if (__claudeReady && __claudeWS && __claudeWS.readyState === WebSocket.OPEN) {
+          try {
+            __claudeWS.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+          } catch (e) { }
+        }
+      };
+
+      function setStatus(text, kind) {
+        status.textContent = text;
+        status.classList.remove('connected', 'error');
+        if (kind) status.classList.add(kind);
+      }
+
+      function connect() {
+        if (!CLAUDE_SESSION || CLAUDE_SESSION === "SESSION_ID_HERE") {
+          setStatus('error', 'error');
+          term.writeln('\r\n[devserver] Session ID not embedded in this review doc.');
+          term.writeln('[devserver] Regenerate with /plan-review so the current session id is captured.\r\n');
+          return;
+        }
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const url = `${proto}//${location.host}/api/claude?session=${encodeURIComponent(CLAUDE_SESSION)}`;
+        setStatus('connecting…');
+        let ws;
+        try {
+          ws = new WebSocket(url);
+        } catch (e) {
+          setStatus('error', 'error');
+          term.writeln(`\r\n[devserver] failed to open ${url}: ${e}\r\n`);
+          return;
+        }
+        ws.binaryType = 'arraybuffer';
+        __claudeWS = ws;
+
+        ws.onopen = () => {
+          __claudeReady = true;
+          setStatus('connected', 'connected');
+          sendBtn.disabled = false;
+          // send initial size so PTY matches xterm
+          try {
+            ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+          } catch (e) { }
+        };
+
+        ws.onmessage = (ev) => {
+          if (typeof ev.data === 'string') {
+            // control message (e.g. error JSON); print to terminal for visibility
+            term.writeln('\r\n[devserver] ' + ev.data);
+            return;
+          }
+          term.write(new Uint8Array(ev.data));
+        };
+
+        ws.onerror = () => {
+          setStatus('error', 'error');
+        };
+
+        ws.onclose = () => {
+          __claudeReady = false;
+          sendBtn.disabled = true;
+          setStatus('disconnected');
+          term.writeln('\r\n[devserver] session closed. refresh page to reconnect.\r\n');
+        };
+
+        const encoder = new TextEncoder();
+        term.onData((data) => {
+          if (ws.readyState !== WebSocket.OPEN) return;
+          try { ws.send(encoder.encode(data)); } catch (e) { }
+        });
+
+        term.onResize(({ cols, rows }) => {
+          if (ws.readyState !== WebSocket.OPEN) return;
+          try { ws.send(JSON.stringify({ type: 'resize', cols, rows })); } catch (e) { }
+        });
+      }
+
+      // Handoff UI (TT-130): populate session id, wire up the "Hand off to terminal" button.
+      const handoffSid = document.getElementById('handoffSid');
+      const handoffBtn = document.getElementById('handoffBtn');
+      const handoffStatus = document.getElementById('handoffStatus');
+      if (handoffSid && CLAUDE_SESSION && CLAUDE_SESSION !== 'SESSION_ID_HERE') {
+        handoffSid.textContent = CLAUDE_SESSION;
+        handoffSid.title = CLAUDE_SESSION;
+      } else if (handoffSid) {
+        handoffSid.textContent = '(not embedded — regenerate with /plan-review)';
+      }
+      if (handoffBtn) {
+        handoffBtn.addEventListener('click', async () => {
+          if (!CLAUDE_SESSION || CLAUDE_SESSION === 'SESSION_ID_HERE') {
+            handoffStatus.textContent = 'No session id embedded in this review doc.';
+            return;
+          }
+          const cmd = `claude --resume ${CLAUDE_SESSION}`;
+          let copied = false;
+          try {
+            await navigator.clipboard.writeText(cmd);
+            copied = true;
+          } catch (e) { /* non-HTTPS or denied — fall through */ }
+          if (__claudeWS && __claudeWS.readyState === WebSocket.OPEN) {
+            try { __claudeWS.send(new Uint8Array([0x04])); } catch (e) { }
+          }
+          // Render the command on its own line so triple-click selects just the command.
+          handoffStatus.textContent = '';
+          const label = document.createElement('div');
+          label.textContent = copied
+            ? 'Copied to clipboard — paste this in your terminal:'
+            : 'Run this in your terminal:';
+          const cmdLine = document.createElement('code');
+          cmdLine.className = 'handoff-status-cmd';
+          cmdLine.textContent = cmd;
+          handoffStatus.appendChild(label);
+          handoffStatus.appendChild(cmdLine);
+          handoffStatus.classList.add('done');
+          handoffBtn.disabled = true;
+          handoffBtn.textContent = 'Session released';
+        });
+      }
+
+      connect();
+    })();
+
+    function sendToClaude() {
+      const btn = document.getElementById('sendClaudeBtn');
+      const prompt = generatePrompt();
+      if (!prompt) return;
+      if (!__claudeWS || __claudeWS.readyState !== WebSocket.OPEN) {
+        btn.textContent = 'Terminal disconnected';
+        setTimeout(() => { btn.textContent = 'Send to Claude'; }, 2000);
+        return;
+      }
+      // On send: open terminal panel, collapse feedback panel — single focused surface.
+      const termPanel = document.getElementById('termPanel');
+      const rightPanel = document.getElementById('rightPanel');
+      if (termPanel.classList.contains('collapsed')) {
+        document.getElementById('termToggle').click();
+      }
+      if (!rightPanel.classList.contains('collapsed')) {
+        document.getElementById('rightToggle').click();
+      }
+      const encoder = new TextEncoder();
+      // Newline at the end so Claude Code submits the bundle as one turn.
+      __claudeWS.send(encoder.encode(prompt + '\n'));
+      btn.textContent = 'Sent';
+      btn.classList.add('sent');
+      if (__claudeTerm) __claudeTerm.focus();
+      setTimeout(() => {
+        btn.textContent = 'Send to Claude';
+        btn.classList.remove('sent');
+      }, 2000);
+    }
+
+    mermaid.initialize({ startOnLoad: false, theme: 'dark', themeVariables: {
+      primaryColor: '#1c2128', primaryTextColor: '#e6edf3', primaryBorderColor: '#30363d',
+      lineColor: '#58a6ff', secondaryColor: '#161b22', tertiaryColor: '#21262d',
+      nodeTextColor: '#e6edf3', edgeLabelBackground: '#161b22'
+    }});
+
+    loadFromStorage();
+    document.querySelectorAll('.filter-tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.filter === state.activeFilter);
+    });
+    renderAll();
+  </script>
+</body>
+
+</html>

@@ -9,3 +9,6 @@ venv/
 .pytest_cache/
 .DS_Store
 *.log
+
+.tmp/
+.plan-review/.devserver-port
