@@ -35,11 +35,17 @@ Click **Send to Claude** and the feedback bundle streams into an embedded `claud
 - **Invoke:** `/plan-review [<ticket>]`
 - **Docs:** [`plugins/plan-review/`](./plugins/plan-review/)
 
+### `architecture-review`
+
+Interactive before/after component diagrams for architecture reviews. Draggable node graph with per-node approve / revise / question pins, saved named layouts, and a Send-to-Claude button that delivers a structured node feedback bundle into a live Claude Code session via the same embedded-terminal + session-resume pattern `plan-review` uses.
+
+- **Install:** `/plugin install architecture-review@xmandeng-plugins`
+- **Invoke:** `/architecture-review [<ticket>]`
+- **Docs:** [`plugins/architecture-review/`](./plugins/architecture-review/)
+
 ---
 
 ## Coming Soon
-
-- **Software architecture diagrams** — interactive before/after component maps for illustrating system designs, refactors, and plan implementations. Same pattern: launched from the terminal, rendered in the browser, wired back into the live session.
 
 More ideas welcome — [open an issue](https://github.com/xmandeng/claude-plugins/issues).
 
