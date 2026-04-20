@@ -13,6 +13,13 @@
       "category": "productivity",
       "source": "./plugins/plan-review",
       "homepage": "https://github.com/xmandeng/claude-plugins/tree/main/plugins/plan-review"
+    },
+    {
+      "name": "architecture-review",
+      "description": "Interactive before/after component diagrams for architecture reviews. Draggable node graph with per-node comment pins, saved layouts, and a Send-to-Claude button that drives a live Claude Code session via an embedded terminal.",
+      "category": "productivity",
+      "source": "./plugins/architecture-review",
+      "homepage": "https://github.com/xmandeng/claude-plugins/tree/main/plugins/architecture-review"
     }
   ]
 }
