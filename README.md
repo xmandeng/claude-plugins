@@ -1,10 +1,18 @@
 # claude-plugins
 
-Claude Code plugins, distributed as a single marketplace.
+> Observable checkpoints for agentic software delivery — so agents ship production code, not slop.
+
+## Why
+
+An observable, spec-driven agentic delivery workflow — **spec → architecture review → implementation** — built to reliably ship production code from agents. The premise: "AI slop" is a context-alignment problem, not a model limitation. Give the human a real review surface at each checkpoint and the agent keeps tracking reality.
+
+Every plugin here runs the same pattern. You launch it from a local Claude Code terminal; it spins up a local HTTP server in the background and hands the active Claude session off into a browser page. You review, annotate, and send structured feedback back into the same running session — no copy-paste, no context drift, no fresh chat that forgot what you were doing.
+
+---
 
 ## Quick Start
 
-```
+```text
 /plugin marketplace add xmandeng/claude-plugins
 /plugin install <plugin-name>@xmandeng-plugins
 ```
@@ -31,7 +39,7 @@ Click **Send to Claude** and the feedback bundle streams into an embedded `claud
 
 ## Coming Soon
 
-- **Software architecture diagrams** — interactive before/after component maps for illustrating system designs, refactors, and plan implementations.
+- **Software architecture diagrams** — interactive before/after component maps for illustrating system designs, refactors, and plan implementations. Same pattern: launched from the terminal, rendered in the browser, wired back into the live session.
 
 More ideas welcome — [open an issue](https://github.com/xmandeng/claude-plugins/issues).
 
