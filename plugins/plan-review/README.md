@@ -2,7 +2,7 @@
 
 Interactive HTML review playgrounds for implementation plans. Section-by-section approve / revise / question controls and a Send-to-Claude button that drives a live Claude Code session via an embedded terminal.
 
-The architecture-review checkpoint in an **observable, spec-driven agentic delivery workflow** — spec → architecture review → implementation — where keeping the human in the loop per-section turns "AI slop" from a model problem into a context-alignment problem you can actually fix.
+The plan-review checkpoint in an **observable, spec-driven agentic delivery workflow** — spec → architecture review → implementation — where keeping the human in the loop per-section turns "AI slop" from a model problem into a context-alignment problem you can actually fix.
 
 ## How It Feels
 

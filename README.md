@@ -37,7 +37,13 @@ Click **Send to Claude** and the feedback bundle streams into an embedded `claud
 
 ### `architecture-review`
 
-Interactive before/after component diagrams for architecture reviews. Draggable node graph with per-node approve / revise / question pins, saved named layouts, and a Send-to-Claude button that delivers a structured node feedback bundle into a live Claude Code session via the same embedded-terminal + session-resume pattern `plan-review` uses.
+Interactive before/after component diagrams. Split view puts the old architecture on the left, the new one on the right — drag nodes to clarify flow and save the arrangement as a named layout that persists to disk next to the HTML.
+
+![Split view: before and after architectures side by side](./plugins/architecture-review/assets/screenshots/split-view.jpg)
+
+Review each node — approve, revise, or question with a comment — and send the bundle back to the same Claude session that drew the diagram, so you iterate in place.
+
+![Embedded Claude terminal alongside the diagram, receiving the node feedback bundle](./plugins/architecture-review/assets/screenshots/after-with-terminal.jpg)
 
 - **Install:** `/plugin install architecture-review@xmandeng-plugins`
 - **Invoke:** `/architecture-review [<ticket>]`
@@ -46,6 +52,8 @@ Interactive before/after component diagrams for architecture reviews. Draggable 
 ---
 
 ## Coming Soon
+
+- **`pr-prep`** — draft the PR body, test plan, and risk notes in the session that built the feature, reviewed section-by-section so it's reviewer-ready before it hits GitHub.
 
 More ideas welcome — [open an issue](https://github.com/xmandeng/claude-plugins/issues).
 
