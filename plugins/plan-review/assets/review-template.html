@@ -1596,7 +1596,7 @@ def example_function(arg: str) -> bool:
     // TT-127: Terminal panel + Send to Claude
     // Mounts xterm.js in #termHost, opens a websocket to the
     // devserver's /api/claude endpoint (which spawns
-    // `claude --continue` in a PTY), and exposes sendToClaude()
+    // `claude --resume <sid>` in a PTY), and exposes sendToClaude()
     // which writes the existing feedback bundle to that session.
     // ============================================================
     let __claudeWS = null;

@@ -1,18 +1,11 @@
 # claude-plugins
 
-Growing collection of [Claude Code](https://claude.com/claude-code) plugins, distributed as a single marketplace.
+Claude Code plugins, distributed as a single marketplace.
 
 ## Quick Start
 
-Add the marketplace once:
-
 ```
 /plugin marketplace add xmandeng/claude-plugins
-```
-
-Then install any plugin from the list below:
-
-```
 /plugin install <plugin-name>@xmandeng-plugins
 ```
 
@@ -22,44 +15,26 @@ Then install any plugin from the list below:
 
 ### `plan-review`
 
-Interactive HTML review playgrounds for implementation plans. Each section of your plan gets independent **approve** / **revise** / **question** controls, and a **Send to Claude** button delivers structured feedback straight to a live Claude Code session via an embedded terminal — no copy-paste, no context-switching.
+Interactive HTML review playgrounds for implementation plans. Every section becomes an independently reviewable unit — approve, flag for revision, or ask a question. Review state persists across reloads.
+
+![Section-by-section review with the feedback panel open](./plugins/plan-review/assets/screenshots/feedback-panel.jpg)
+
+Click **Send to Claude** and the feedback bundle streams into an embedded `claude --resume <authoring-session-id>` PTY running inside the page. The session id is baked into the HTML at generation time — you always reconnect to the exact conversation that authored the plan.
+
+![Embedded Claude terminal receiving the feedback bundle](./plugins/plan-review/assets/screenshots/terminal-panel.jpg)
 
 - **Install:** `/plugin install plan-review@xmandeng-plugins`
-- **Invoke:** `/plan-review [<ticket>]` inside any Claude Code session
+- **Invoke:** `/plan-review [<ticket>]`
 - **Docs:** [`plugins/plan-review/`](./plugins/plan-review/)
 
 ---
 
 ## Coming Soon
 
-- **Software architecture diagrams** — interactive before/after component maps for illustrating system designs, refactors, and plan implementations. Draggable nodes, annotated data flow, inline code snippets.
-- More ideas welcome — [open an issue](https://github.com/xmandeng/claude-plugins/issues).
+- **Software architecture diagrams** — interactive before/after component maps for illustrating system designs, refactors, and plan implementations.
 
----
-
-## Repository Layout
-
-```
-.claude-plugin/
-└── marketplace.json          # marketplace manifest (lists every plugin below)
-plugins/
-└── <plugin-name>/
-    ├── .claude-plugin/
-    │   └── plugin.json       # plugin manifest
-    ├── skills/
-    │   └── <skill-name>/
-    │       └── SKILL.md      # the skill that backs the slash command
-    └── README.md             # per-plugin docs
-```
-
-Each plugin lives in its own subdirectory under `plugins/`. The root `.claude-plugin/marketplace.json` registers them all so a single `marketplace add` exposes the full collection.
-
-## Adding a New Plugin
-
-1. Create `plugins/<new-plugin>/` with the standard layout above.
-2. Add an entry to `plugins[]` in `.claude-plugin/marketplace.json` with `"source": "./plugins/<new-plugin>"`.
-3. Commit and push — the new plugin becomes installable on the next `/plugin marketplace update`.
+More ideas welcome — [open an issue](https://github.com/xmandeng/claude-plugins/issues).
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Individual plugins may also include their own LICENSE files.
+MIT — see [LICENSE](LICENSE).
