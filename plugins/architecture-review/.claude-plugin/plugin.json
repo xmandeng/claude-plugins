@@ -1,6 +1,6 @@
 {
   "name": "architecture-review",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Interactive before/after component diagrams for architecture reviews. Draggable node graph, saved layouts, per-node comment pins, and a Send-to-Claude button that drives a live Claude Code session via an embedded terminal.",
   "author": {
     "name": "xmandeng",
