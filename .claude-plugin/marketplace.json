@@ -20,6 +20,13 @@
       "category": "productivity",
       "source": "./plugins/architecture-review",
       "homepage": "https://github.com/xmandeng/claude-plugins/tree/main/plugins/architecture-review"
+    },
+    {
+      "name": "architecture-map",
+      "description": "Interactive architecture concept-map playground. Chat-seeded draggable node graph with layered filters, per-node insights, saved named layouts, per-node feedback pins, and a Send-to-Claude button that drives a live Claude Code session via an embedded terminal.",
+      "category": "productivity",
+      "source": "./plugins/architecture-map",
+      "homepage": "https://github.com/xmandeng/claude-plugins/tree/main/plugins/architecture-map"
     }
   ]
 }
