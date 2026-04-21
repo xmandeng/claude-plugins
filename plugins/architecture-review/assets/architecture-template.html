@@ -2347,6 +2347,13 @@ function sendToClaude() {
   btn.textContent = 'Sent';
   btn.classList.add('sent');
   if (__claudeTerm) __claudeTerm.focus();
+  // Snap the terminal viewport to the bottom. The PTY echo arrives in chunks
+  // and openTerminal() triggers a fit() reflow, so one scroll isn't enough —
+  // cover the animation frame, the post-fit reflow, and any trailing echo.
+  const snapToBottom = () => { if (__claudeTerm) __claudeTerm.scrollToBottom(); };
+  requestAnimationFrame(snapToBottom);
+  setTimeout(snapToBottom, 260);
+  setTimeout(snapToBottom, 600);
   setTimeout(() => {
     btn.textContent = 'Send to Claude';
     btn.classList.remove('sent');
