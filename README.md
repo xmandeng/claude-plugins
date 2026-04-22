@@ -49,6 +49,20 @@ Review each node — approve, revise, or question with a comment — and send th
 - **Invoke:** `/architecture-review [<ticket>]`
 - **Docs:** [`plugins/architecture-review/`](./plugins/architecture-review/)
 
+### `architecture-map`
+
+Interactive single-view concept map of an application, seeded from conversation context. Draggable node graph with layered filters, per-node insights attributed to their authors, saved named layouts, and per-node feedback pins.
+
+![Overview: end-to-end pipeline with layered node types](./plugins/architecture-map/assets/screenshots/map-overview.jpg)
+
+Click a node to see the design rationale — each author (you, Claude, a collaborator) gets a distinct color, so the *why* is always visible alongside the *what*.
+
+![Detail panel showing design rationale from two authors](./plugins/architecture-map/assets/screenshots/node-detail.jpg)
+
+- **Install:** `/plugin install architecture-map@xmandeng-plugins`
+- **Invoke:** `/architecture-map [<ticket>]`
+- **Docs:** [`plugins/architecture-map/`](./plugins/architecture-map/)
+
 ---
 
 ## Coming Soon
