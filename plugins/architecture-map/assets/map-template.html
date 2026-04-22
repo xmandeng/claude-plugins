@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TICKET — TITLE: Before / After Architecture</title>
+<title>Architecture Map: TICKET TITLE HERE</title>
 <style>
   :root {
     --bg: #0d1117;
@@ -45,6 +45,37 @@
   }
   .topbar h1 { font-size: 12px; font-weight: 600; color: var(--accent-blue); white-space: nowrap; letter-spacing: 0.5px; }
   .topbar .spacer { flex: 1; }
+  .scope-header {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-weight: 500;
+    padding: 3px 10px;
+    border-left: 2px solid var(--accent-cyan);
+    margin-left: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 40ch;
+  }
+  .scope-header:empty { display: none; }
+  .detail-insights { display: flex; flex-direction: column; gap: 8px; }
+  .insight {
+    display: flex;
+    gap: 8px;
+    padding: 8px 10px;
+    border-left: 3px solid var(--accent-cyan);
+    background: rgba(57, 210, 192, 0.05);
+    border-radius: 0 4px 4px 0;
+    font-size: 11px;
+    line-height: 1.55;
+  }
+  .insight-author {
+    font-weight: 600;
+    text-transform: lowercase;
+    flex-shrink: 0;
+    letter-spacing: 0.3px;
+  }
+  .insight-text { color: var(--text); flex: 1; }
   .topbar .view-pills { display: flex; gap: 4px; }
   .view-pill {
     background: transparent;
@@ -822,10 +853,11 @@
 
 <div class="topbar">
   <h1>TICKET TITLE HERE</h1>
-  <div class="view-pills">
-    <button class="view-pill active" data-view="split" onclick="setView('split')">Split</button>
-    <button class="view-pill" data-view="before" onclick="setView('before')">Before</button>
-    <button class="view-pill" data-view="after" onclick="setView('after')">After</button>
+  <span id="scopeHeader" class="scope-header" title="Scope of the map"></span>
+  <div class="view-pills" style="display:none">
+    <!-- architecture-map is single-view; pills hidden. Data structure retains
+         before/after scaffolding but BEFORE_NODES / BEFORE_EDGES are empty. -->
+    <button class="view-pill" data-view="after" onclick="setView('after')">Map</button>
   </div>
   <span id="group-count" style="display:none; font-size:10px; background:var(--accent-cyan); color:#0d1117; padding:1px 6px; border-radius:8px; font-weight:600;" title="Shift+Click to select multiple"></span>
   <div class="spacer"></div>
@@ -891,58 +923,45 @@
 
 <script>
 // ================================================================
-// DATA — Nodes and edges for Before and After diagrams
-// ================================================================
-
-// ================================================================
-// CONTENT: Replace these arrays with your architecture data.
+// DATA — Nodes and edges for the architecture map.
+//
+// The template retains the BEFORE_NODES / AFTER_NODES naming from its
+// architecture-review ancestor, but architecture-map is single-view:
+//   - Leave BEFORE_NODES / BEFORE_EDGES empty (vestigial scaffolding).
+//   - Populate AFTER_NODES / AFTER_EDGES with your map.
 //
 // Node properties:
-//   id       — unique identifier (used in edges)
-//   x, y     — initial position on canvas (draggable)
-//   layer    — color group: 'orchestration' | 'routing' | 'queue' | 'signal'
-//   label    — displayed name
-//   type     — subtitle text
-//   file     — (optional) source file path
-//   desc     — tooltip description
-//   code     — (optional) code snippet shown in detail panel
-//   badge    — (optional) pill text below label
-//   note     — (optional) warning/callout text
-//   change   — (optional, After only) 'new' | 'modified' | 'removed'
+//   id          — unique identifier (used in edges)
+//   x, y        — initial position on canvas (draggable)
+//   layer       — free-form layer name; pill color is auto-assigned
+//   label       — displayed name
+//   type        — subtitle text
+//   file        — (optional) source file path
+//   desc        — tooltip description
+//   details     — (optional) multi-line detail panel body
+//   code        — (optional) code snippet in detail panel
+//   badge       — (optional) pill text below label
+//   note        — (optional) warning/callout text
+//   insights    — (optional) [{author, text}] design/analysis notes
+//   connections — (optional) ids of connected nodes
 //
 // Edge properties:
 //   from, to — node ids
 //   label    — (optional) edge label text
-//   style    — (optional) 'new' | 'callback' for visual distinction
+//   style    — (optional) 'dashed' for out-of-band flows
 // ================================================================
 
-const BEFORE_NODES = [
-  { id: 'component-a', x: 380, y: 30, layer: 'orchestration',
-    label: 'ComponentA', type: 'Description',
-    file: 'path/to/file.py',
-    desc: 'What this component does in the current architecture.',
-  },
-  { id: 'component-b', x: 380, y: 200, layer: 'routing',
-    label: 'ComponentB', type: 'Description',
-    desc: 'What this component does.',
-  },
-  { id: 'component-c', x: 380, y: 370, layer: 'queue',
-    label: 'ComponentC', type: 'Description',
-    desc: 'What this component does.',
-  },
-];
-
-const BEFORE_EDGES = [
-  { from: 'component-a', to: 'component-b', label: 'data flow' },
-  { from: 'component-b', to: 'component-c', label: 'processes' },
-];
+const BEFORE_NODES = [];
+const BEFORE_EDGES = [];
 
 const AFTER_NODES = [
   { id: 'component-a', x: 380, y: 30, layer: 'orchestration',
     label: 'ComponentA', type: 'Description',
     file: 'path/to/file.py',
-    desc: 'What changed in this component.',
-    change: 'modified',
+    desc: 'What this component does.',
+    insights: [
+      { author: 'claude', text: 'Replace this example node with your map data.' },
+    ],
   },
   { id: 'new-component', x: 380, y: 200, layer: 'orchestration',
     label: 'NewComponent', type: 'Description',
@@ -964,7 +983,7 @@ const AFTER_EDGES = [
 // RENDERING ENGINE
 // ================================================================
 
-let currentView = 'split';
+let currentView = 'after';
 let flowAnimated = false;
 let selectedNode = null;
 
@@ -997,9 +1016,10 @@ function buildPanes() {
     pane.id = `pane-${paneId}`;
     pane.dataset.pane = paneId;
 
+    // architecture-map hides the pane label — single-view, no Before/After.
     const label = document.createElement('div');
     label.className = `pane-label ${paneId}`;
-    label.textContent = paneId === 'before' ? 'Before' : 'After';
+    label.style.display = 'none';
     pane.appendChild(label);
 
     const canvas = document.createElement('div');
@@ -1422,6 +1442,17 @@ function selectNodeDetail(node, edges, paneId) {
   if (node.details) html += `<div class="detail-section"><h3>Details</h3><p>${node.details}</p></div>`;
   if (node.code) html += `<div class="detail-section"><h3>Code</h3><pre>${node.code}</pre></div>`;
 
+  if (Array.isArray(node.insights) && node.insights.length) {
+    html += `<div class="detail-section"><h3>Insights</h3><div class="detail-insights">`;
+    node.insights.forEach(ins => {
+      const color = insightAuthorColor(ins.author || 'unknown');
+      const author = (ins.author || 'unknown').replace(/[<>"']/g, '');
+      const text = (ins.text || '').replace(/[<>]/g, c => c === '<' ? '&lt;' : '&gt;');
+      html += `<div class="insight" style="border-left-color:${color};background:${color}14"><span class="insight-author" style="color:${color}">${author}</span><span class="insight-text">${text}</span></div>`;
+    });
+    html += `</div></div>`;
+  }
+
   const incoming = edges.filter(e => e.to === node.id);
   const outgoing = edges.filter(e => e.from === node.id);
   if (incoming.length || outgoing.length) {
@@ -1686,11 +1717,36 @@ function escHtml(s) {
 const PLAN_NAME = "TITLE HERE";
 const CLAUDE_SESSION = "SESSION_ID_HERE";
 const LAYOUTS_FILE = 'LAYOUTS_FILE_HERE';
+const SCOPE_HEADER = "SCOPE_HEADER_HERE";
+
+// Populate the topbar scope header. The CSS rule `.scope-header:empty`
+// hides it automatically when the string is empty, so an unset scope
+// simply disappears from the topbar.
+(function applyScopeHeader() {
+  const el = document.getElementById('scopeHeader');
+  if (!el) return;
+  el.textContent = SCOPE_HEADER || '';
+})();
+
+// Stable color per insight author — cycles through a palette.
+const INSIGHT_AUTHOR_PALETTE = [
+  'var(--accent-cyan)', 'var(--accent-orange)', 'var(--accent-purple)',
+  'var(--accent-green)', 'var(--accent-pink)', 'var(--accent-blue)',
+];
+const _insightAuthorColors = {};
+function insightAuthorColor(author) {
+  const key = String(author || 'unknown').toLowerCase();
+  if (_insightAuthorColors[key]) return _insightAuthorColors[key];
+  const n = Object.keys(_insightAuthorColors).length;
+  const c = INSIGHT_AUTHOR_PALETTE[n % INSIGHT_AUTHOR_PALETTE.length];
+  _insightAuthorColors[key] = c;
+  return c;
+}
 
 // Scoped localStorage keys — prefixed by PLAN_NAME so multiple diagrams in
 // the same origin don't collide with each other or with plan-review.
-const STORAGE_KEY = 'arch-layout:' + PLAN_NAME;
-const FEEDBACK_KEY = 'arch-state:' + PLAN_NAME;
+const STORAGE_KEY = 'map-layout:' + PLAN_NAME;
+const FEEDBACK_KEY = 'map-state:' + PLAN_NAME;
 let savedLayouts = {};
 let canWriteToFile = false;
 let activeLayoutName = null;
@@ -1929,7 +1985,7 @@ function closeLayoutDropdown() {
 }
 
 // Autosave
-const AUTOSAVE_KEY = 'arch-autosave:' + PLAN_NAME;
+const AUTOSAVE_KEY = 'map-autosave:' + PLAN_NAME;
 let autosaveTimer = null;
 function debouncedAutosave() {
   clearTimeout(autosaveTimer);
@@ -1986,10 +2042,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
-  if (e.key === '1') setView('before');
-  else if (e.key === '2') setView('after');
-  else if (e.key === '3') setView('split');
-  else if (e.key === 'f') toggleFlow();
+  if (e.key === 'f') toggleFlow();
   else if (e.key === 'Escape') { closeDetail(); clearGroupSelection(); closeSaveModal(); closeLayoutDropdown(); }
   else if (e.key === '=' || e.key === '+') zoomBy(0.1);
   else if (e.key === '-') zoomBy(-0.1);
@@ -2004,13 +2057,10 @@ document.addEventListener('click', (e) => {
 // INIT
 // ================================================================
 
-const isMobile = window.matchMedia('(max-width: 768px)').matches;
-if (isMobile) {
-  currentView = 'before';
-  document.querySelectorAll('.view-pill').forEach(p => {
-    p.classList.toggle('active', p.dataset.view === 'before');
-  });
-}
+// Single-view mode: architecture-map always shows the single `after` pane.
+// The before/after data structure is inherited from architecture-review and
+// kept as vestigial scaffolding to minimize template divergence; BEFORE_NODES
+// and BEFORE_EDGES are always empty for architecture-map.
 
 initLayouts().then(() => {
   if (!loadAutosave()) {
@@ -2140,14 +2190,16 @@ function generatePrompt() {
     return '';
   }
 
-  let prompt = `Here is my architecture-review of ${PLAN_NAME}:\n\n`;
+  let prompt = `Here is my architecture-map review of ${PLAN_NAME}:\n\n`;
 
   function block(title, items) {
     if (!items.length) return '';
     let out = `## ${title} (${items.length})\n\n`;
-    items.forEach(({ paneId, node, comment }) => {
-      const change = node.change ? ` (${node.change})` : '';
-      out += `### ${node.label} — ${paneId} pane${change}\n`;
+    items.forEach(({ node, comment }) => {
+      // architecture-map is single-view; emit layer instead of pane annotation.
+      const layer = node.layer ? ` — ${node.layer}` : '';
+      out += `### ${node.label}${layer}\n`;
+      if (node.type) out += `Type: ${node.type}\n`;
       if (node.file) out += `File: ${node.file}\n`;
       if (comment) out += `Comment: ${comment}\n`;
       out += '\n';
@@ -2336,10 +2388,10 @@ function sendToClaude() {
   openTerminal();
   // One-shot context-switch preamble, scoped by filename so each review doc
   // emits it once per browser session.
-  const preambleKey = 'arch-review-preamble-sent:' + location.pathname;
+  const preambleKey = 'arch-map-preamble-sent:' + location.pathname;
   let body = prompt;
   if (!sessionStorage.getItem(preambleKey)) {
-    body = `**Context switch:** you are now in the architecture-review playground. The diagram is at \`${location.pathname}\`. Discuss the feedback below conversationally. Do NOT edit the HTML or the layouts JSON until I explicitly say to update. When discussion on a node wraps, ask whether to update the document.\n\n---\n\n${prompt}`;
+    body = `**Context switch:** you are now in the architecture-map playground. The map is at \`${location.pathname}\`. Discuss the feedback below conversationally. Do NOT edit the HTML or the layouts JSON until I explicitly say to update. When discussion on a node wraps, ask whether to update the document.\n\n---\n\n${prompt}`;
     sessionStorage.setItem(preambleKey, '1');
   }
   const encoder = new TextEncoder();
