@@ -1,5 +1,5 @@
 # Ship, Don't Slop
-> Observable checkpoints for agentic software delivery — so agents ship production code, not slop.
+> Observable checkpoints for agentic software delivery — so agents ship production code you'd actually merge.
 
 ## Why
 
