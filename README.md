@@ -1,5 +1,4 @@
 # Ship, Don't Slop
-### Review plugins for Claude Code
 > Observable checkpoints for agentic software delivery — so agents ship production code, not slop.
 
 ## Why
