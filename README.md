@@ -1,4 +1,4 @@
-# Review Surfaces for Claude Code
+# Ship, Don't Slop — Review Plugins for Claude Code
 
 > Observable checkpoints for agentic software delivery — so agents ship production code, not slop.
 
