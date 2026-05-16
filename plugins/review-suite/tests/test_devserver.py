@@ -310,11 +310,11 @@ class TestResolveSafeLayoutsTarget:
 
     def test_accepts_layouts_json_in_subdir(self, tmp_path):
         target = devserver.resolve_safe_layouts_target(
-            "/.architecture-review/TT-131-architecture-review-layouts.json", str(tmp_path)
+            "/.design-review/TT-131-design-review-layouts.json", str(tmp_path)
         )
         assert target is not None
-        assert target.name == "TT-131-architecture-review-layouts.json"
-        assert target.parent.name == ".architecture-review"
+        assert target.name == "TT-131-design-review-layouts.json"
+        assert target.parent.name == ".design-review"
 
     def test_strips_query_string(self, tmp_path):
         target = devserver.resolve_safe_layouts_target(
@@ -420,11 +420,11 @@ class TestDoPutHappyPath:
     def test_creates_parent_dirs(self, tmp_path):
         payload = b"{}"
         handler, _ = build_put_handler(
-            tmp_path, "/.architecture-review/TT-1-layouts.json", payload
+            tmp_path, "/.design-review/TT-1-layouts.json", payload
         )
         handler.do_PUT()
         assert handler._status == [(204, None)]
-        assert (tmp_path / ".architecture-review" / "TT-1-layouts.json").exists()
+        assert (tmp_path / ".design-review" / "TT-1-layouts.json").exists()
 
     def test_overwrites_existing_atomically(self, tmp_path):
         target = tmp_path / "foo-layouts.json"

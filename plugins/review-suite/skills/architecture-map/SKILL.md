@@ -14,7 +14,7 @@ Positioned alongside its sibling plugins:
 | Plugin | Output | When to use |
 |---|---|---|
 | `plan-review` | Section-by-section plan review | Approving an implementation plan |
-| `architecture-review` | Before/after diagram for a proposed change | Reviewing an architecture diff |
+| `design-review` | Before/after diagram for a proposed change | Reviewing a design diff |
 | **`architecture-map`** | **Single-view** concept map of a system | Mapping an existing application end-to-end |
 
 ## Invocation Forms
@@ -24,7 +24,7 @@ Positioned alongside its sibling plugins:
 | `/architecture-map` | Infer both ticket ID and scope from recent conversation context. Generate without prompting if context is clear; ask only when context is thin. |
 | `/architecture-map <ticket>` | User supplies the ticket ID (any tracker format). Infer scope from conversation; ask if unclear. |
 
-A two-arg form is **not** supported — keep the signature minimal, same as `plan-review` and `architecture-review`.
+A two-arg form is **not** supported — keep the signature minimal, same as `plan-review` and `design-review`.
 
 ## How It Works
 
@@ -43,7 +43,7 @@ On **Resume** the flow short-circuits: hydrate the prior node/edge arrays into t
 1. **`ARCHITECTURE_MAP_DIR` env var** (if set) — explicit override, absolute or project-relative.
 2. **`.architecture-map/`** — default, auto-created via `mkdir -p` if missing.
 
-Kept distinct from `.plan-review/` and `.architecture-review/` so artifacts don't collide when multiple plugins run in one project.
+Kept distinct from `.plan-review/` and `.design-review/` so artifacts don't collide when multiple plugins run in one project.
 
 ## Instructions
 

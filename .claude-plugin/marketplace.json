@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "review-suite",
-      "description": "Bundled review and diagram playgrounds: /plan-review, /architecture-review, /architecture-map, /code-diagram, and a standalone /devserver launcher. Single install with one shared devserver binary and PTY bridge for session-resumed feedback delivery.",
+      "description": "Bundled review and diagram playgrounds: /plan-review, /design-review, /architecture-map, /code-diagram, and a standalone /devserver launcher. Single install with one shared devserver binary and PTY bridge for session-resumed feedback delivery.",
       "category": "productivity",
       "source": "./plugins/review-suite",
       "homepage": "https://github.com/xmandeng/claude-plugins/tree/main/plugins/review-suite"

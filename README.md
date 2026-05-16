@@ -3,7 +3,7 @@
 
 ## Why
 
-An observable, spec-driven agentic delivery workflow — **spec → architecture review → implementation** — built to reliably ship production code from agents. The premise: "AI slop" is a context-alignment problem, not a model limitation. Give the human a real review surface at each checkpoint and the agent keeps tracking reality.
+An observable, spec-driven agentic delivery workflow — **spec → design review → implementation** — built to reliably ship production code from agents. The premise: "AI slop" is a context-alignment problem, not a model limitation. Give the human a real review surface at each checkpoint and the agent keeps tracking reality.
 
 Every skill here runs the same pattern. You launch it from a local Claude Code terminal; it spins up a local HTTP server in the background and hands the active Claude session off into a browser page. You review, annotate, and send structured feedback back into the same running session — no copy-paste, no context drift, no fresh chat that forgot what you were doing.
 
@@ -34,7 +34,7 @@ Click **Send to Claude** and the feedback bundle streams into an embedded `claud
 
 ![Embedded Claude terminal receiving the feedback bundle](./plugins/review-suite/assets/screenshots/terminal-panel.jpg)
 
-### `/architecture-review [<ticket>]`
+### `/design-review [<ticket>]`
 
 Interactive before/after component diagrams. Split view puts the old architecture on the left, the new one on the right — drag nodes to clarify flow and save the arrangement as a named layout that persists to disk next to the HTML.
 

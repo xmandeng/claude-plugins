@@ -5,7 +5,7 @@ xterm.js terminal to a local `claude --resume <session-id>` PTY via WebSocket,
 and accepts PUT uploads of `*-layouts.json` files so the "saved named layouts"
 feature of the architecture / map templates can persist to disk next to the HTML.
 
-Shared by all skills in the bundle (plan-review, architecture-review,
+Shared by all skills in the bundle (plan-review, design-review,
 architecture-map, code-diagram, devserver). One binary, one protocol.
 
 Usage:

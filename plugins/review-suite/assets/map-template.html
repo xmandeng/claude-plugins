@@ -926,7 +926,7 @@
 // DATA — Nodes and edges for the architecture map.
 //
 // The template retains the BEFORE_NODES / AFTER_NODES naming from its
-// architecture-review ancestor, but architecture-map is single-view:
+// design-review ancestor, but architecture-map is single-view:
 //   - Leave BEFORE_NODES / BEFORE_EDGES empty (vestigial scaffolding).
 //   - Populate AFTER_NODES / AFTER_EDGES with your map.
 //
@@ -1713,7 +1713,7 @@ function escHtml(s) {
 // SAVE / LOAD LAYOUTS
 // ================================================================
 
-// Populated by the architecture-review skill at HTML-generation time.
+// Populated by the architecture-map skill at HTML-generation time.
 const PLAN_NAME = "TITLE HERE";
 const CLAUDE_SESSION = "SESSION_ID_HERE";
 const LAYOUTS_FILE = 'LAYOUTS_FILE_HERE';
@@ -2058,7 +2058,7 @@ document.addEventListener('click', (e) => {
 // ================================================================
 
 // Single-view mode: architecture-map always shows the single `after` pane.
-// The before/after data structure is inherited from architecture-review and
+// The before/after data structure is inherited from design-review and
 // kept as vestigial scaffolding to minimize template divergence; BEFORE_NODES
 // and BEFORE_EDGES are always empty for architecture-map.
 
@@ -2283,7 +2283,7 @@ function openTerminal() {
     if (!CLAUDE_SESSION || CLAUDE_SESSION === 'SESSION_ID_HERE') {
       setStatus('error', 'error');
       term.writeln('\r\n[devserver] Session ID not embedded in this review doc.');
-      term.writeln('[devserver] Regenerate with /architecture-review so the current session id is captured.\r\n');
+      term.writeln('[devserver] Regenerate with /architecture-map so the current session id is captured.\r\n');
       return;
     }
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -2340,7 +2340,7 @@ function openTerminal() {
     handoffSid.textContent = CLAUDE_SESSION;
     handoffSid.title = CLAUDE_SESSION;
   } else if (handoffSid) {
-    handoffSid.textContent = '(not embedded — regenerate with /architecture-review)';
+    handoffSid.textContent = '(not embedded — regenerate with /architecture-map)';
   }
   if (handoffBtn) {
     handoffBtn.addEventListener('click', async () => {
