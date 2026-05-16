@@ -1682,7 +1682,7 @@ function escHtml(s) {
 // SAVE / LOAD LAYOUTS
 // ================================================================
 
-// Populated by the architecture-review skill at HTML-generation time.
+// Populated by the design-review skill at HTML-generation time.
 const PLAN_NAME = "TITLE HERE";
 const CLAUDE_SESSION = "SESSION_ID_HERE";
 const LAYOUTS_FILE = 'LAYOUTS_FILE_HERE';
@@ -2140,7 +2140,7 @@ function generatePrompt() {
     return '';
   }
 
-  let prompt = `Here is my architecture-review of ${PLAN_NAME}:\n\n`;
+  let prompt = `Here is my design-review of ${PLAN_NAME}:\n\n`;
 
   function block(title, items) {
     if (!items.length) return '';
@@ -2231,7 +2231,7 @@ function openTerminal() {
     if (!CLAUDE_SESSION || CLAUDE_SESSION === 'SESSION_ID_HERE') {
       setStatus('error', 'error');
       term.writeln('\r\n[devserver] Session ID not embedded in this review doc.');
-      term.writeln('[devserver] Regenerate with /architecture-review so the current session id is captured.\r\n');
+      term.writeln('[devserver] Regenerate with /design-review so the current session id is captured.\r\n');
       return;
     }
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -2288,7 +2288,7 @@ function openTerminal() {
     handoffSid.textContent = CLAUDE_SESSION;
     handoffSid.title = CLAUDE_SESSION;
   } else if (handoffSid) {
-    handoffSid.textContent = '(not embedded — regenerate with /architecture-review)';
+    handoffSid.textContent = '(not embedded — regenerate with /design-review)';
   }
   if (handoffBtn) {
     handoffBtn.addEventListener('click', async () => {
@@ -2339,7 +2339,7 @@ function sendToClaude() {
   const preambleKey = 'arch-review-preamble-sent:' + location.pathname;
   let body = prompt;
   if (!sessionStorage.getItem(preambleKey)) {
-    body = `**Context switch:** you are now in the architecture-review playground. The diagram is at \`${location.pathname}\`. Discuss the feedback below conversationally. Do NOT edit the HTML or the layouts JSON until I explicitly say to update. When discussion on a node wraps, ask whether to update the document.\n\n---\n\n${prompt}`;
+    body = `**Context switch:** you are now in the design-review playground. The diagram is at \`${location.pathname}\`. Discuss the feedback below conversationally. Do NOT edit the HTML or the layouts JSON until I explicitly say to update. When discussion on a node wraps, ask whether to update the document.\n\n---\n\n${prompt}`;
     sessionStorage.setItem(preambleKey, '1');
   }
   const encoder = new TextEncoder();

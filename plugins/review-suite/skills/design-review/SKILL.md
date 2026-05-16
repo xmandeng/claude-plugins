@@ -1,27 +1,27 @@
 ---
-name: architecture-review
-description: Create an interactive before/after architecture diagram review playground. Generates a draggable SVG diagram with per-node approve/revise/question controls and a "Send to Claude" button that delivers structured node feedback directly to a live Claude Code session. Usage - /architecture-review [<ticket>]
+name: design-review
+description: Create an interactive before/after design diagram review playground. Generates a draggable SVG diagram with per-node approve/revise/question controls and a "Send to Claude" button that delivers structured node feedback directly to a live Claude Code session. Usage - /design-review [<ticket>]
 allowed-tools: Read Write Edit Bash(mkdir:*) Bash(cp:*) Bash(lsof:*) Bash(python3:*) Bash(ls:*) Bash(cat:*) Bash(echo:*)
 argument-hint: "[<ticket>]"
 ---
 
-# Architecture Review Skill
+# Design Review Skill
 
-Creates an interactive before/after architecture diagram from a bundled template, pre-populated with component nodes and edges supplied by the main agent. The reviewer attaches per-node approve / revise / question marks plus free-text comments. Clicking "Send to Claude" delivers a structured feedback bundle directly into an embedded Claude Code terminal (PTY-bridged via the bundled devserver).
+Creates an interactive before/after design diagram from a bundled template, pre-populated with component nodes and edges supplied by the main agent. The reviewer attaches per-node approve / revise / question marks plus free-text comments. Clicking "Send to Claude" delivers a structured feedback bundle directly into an embedded Claude Code terminal (PTY-bridged via the bundled devserver).
 
 ## Invocation Forms
 
 | Invocation | Behavior |
 |---|---|
-| `/architecture-review` | Model infers both ticket ID and title from conversation context. Confirms with user before writing; asks if no context is recoverable. |
-| `/architecture-review <ticket>` | User supplies the ticket ID (any tracker format: `TT-131`, `RFC-042`, `PROJ-7`, etc.). Model infers the title from context; asks if unclear. |
+| `/design-review` | Model infers both ticket ID and title from conversation context. Confirms with user before writing; asks if no context is recoverable. |
+| `/design-review <ticket>` | User supplies the ticket ID (any tracker format: `TT-131`, `RFC-042`, `PROJ-7`, etc.). Model infers the title from context; asks if unclear. |
 
-A two-arg form (`/architecture-review <id> <title>`) is **not** supported — keep the signature minimal, same as `plan-review`.
+A two-arg form (`/design-review <id> <title>`) is **not** supported — keep the signature minimal, same as `plan-review`.
 
 ## How It Works
 
 1. Check for a prior diagram matching the ticket. If found, offer **Resume** / **Overwrite** / **Cancel**.
-2. Read the bundled template: `${CLAUDE_PLUGIN_ROOT}/assets/architecture-template.html`
+2. Read the bundled template: `${CLAUDE_PLUGIN_ROOT}/assets/design-review-template.html`
 3. Populate the `BEFORE_NODES`, `BEFORE_EDGES`, `AFTER_NODES`, `AFTER_EDGES` arrays with component data.
 4. Set the page title, heading, and JS constants (`PLAN_NAME`, `CLAUDE_SESSION`, `LAYOUTS_FILE`).
 5. Write the output HTML to the resolved output directory.
@@ -32,8 +32,8 @@ On **Resume** the flow short-circuits: hydrate the prior node/edge arrays into t
 
 ### Output Directory Resolution
 
-1. **`ARCHITECTURE_REVIEW_DIR` env var** (if set) — explicit override, absolute or project-relative.
-2. **`.architecture-review/`** — default, auto-created via `mkdir -p` if missing.
+1. **`DESIGN_REVIEW_DIR` env var** (if set) — explicit override, absolute or project-relative.
+2. **`.design-review/`** — default, auto-created via `mkdir -p` if missing.
 
 Kept distinct from `.plan-review/` so artifacts don't collide when both plugins run in one project.
 
@@ -46,13 +46,13 @@ When invoked:
    - One arg: treat as ticket ID. Accept any tracker format. Infer title from conversation; ask if the title is unclear.
    - Free-form slugs (e.g., `auth-rework`) passed as a single arg are **not** ticket IDs — treat as title text or ask the user to clarify.
 
-2. **Resolve output directory.** Use `$ARCHITECTURE_REVIEW_DIR` if set, else `.architecture-review/`. Ensure it exists (`mkdir -p`).
+2. **Resolve output directory.** Use `$DESIGN_REVIEW_DIR` if set, else `.design-review/`. Ensure it exists (`mkdir -p`).
 
 2a. **Detect prior diagram for this ticket.** Before reading the template or constructing a new filename, glob the output directory for an existing HTML matching the ticket:
 
    ```bash
    shopt -s nullglob
-   PRIOR=( "$OUT_DIR"/"$TICKET"-*-architecture-review.html )
+   PRIOR=( "$OUT_DIR"/"$TICKET"-*-design-review.html )
    shopt -u nullglob
    ```
 
@@ -61,7 +61,7 @@ When invoked:
    - **Zero matches** → continue to step 3 (write-new flow unchanged).
    - **One match** → ask the user:
 
-     > Found a prior architecture review for `<ticket>` at `<path>` (modified `<mtime>`).
+     > Found a prior design review for `<ticket>` at `<path>` (modified `<mtime>`).
      >
      > - **Resume** — keep the nodes/edges and your prior review marks; refresh the embedded session id so the terminal bridge works.
      > - **Overwrite** — replace with a freshly generated diagram from the current conversation. Prior review marks for this filename remain in the browser's localStorage.
@@ -71,9 +71,9 @@ When invoked:
 
    - **Multiple matches** → list each prior file with path + mtime; ask the user to choose which to resume, or Overwrite / Cancel.
 
-3. **Construct filename.** `<output-dir>/<ticket>-<slugified-title>-architecture-review.html` (lowercase, hyphens). If no ticket, use `<slugified-title>-architecture-review.html`.
+3. **Construct filename.** `<output-dir>/<ticket>-<slugified-title>-design-review.html` (lowercase, hyphens). If no ticket, use `<slugified-title>-design-review.html`.
 
-4. **Read the template.** `${CLAUDE_PLUGIN_ROOT}/assets/architecture-template.html`.
+4. **Read the template.** `${CLAUDE_PLUGIN_ROOT}/assets/design-review-template.html`.
 
 5. **Ask the main agent for node + edge data.** Each node needs:
 
@@ -105,7 +105,7 @@ When invoked:
 6. **Replace the four data arrays** (`BEFORE_NODES`, `BEFORE_EDGES`, `AFTER_NODES`, `AFTER_EDGES`) in the template with the provided data.
 
 7. **Update identifiers** in the HTML:
-   - `<title>` tag → `Architecture Review: <ticket>: <title>` (or `Architecture Review: <title>`)
+   - `<title>` tag → `Design Review: <ticket>: <title>` (or `Design Review: <title>`)
    - Topbar `<h1>` → `<ticket> <title>` (or `<title>`)
    - `PLAN_NAME` JS constant → `<ticket>: <title>` (or `<title>`)
    - `CLAUDE_SESSION` JS constant → the session id from step 5a
@@ -116,7 +116,7 @@ When invoked:
 9. **Start (or reuse) the devserver.** Each project gets its own port, recorded in `<output-dir>/.devserver-port`. Re-invocations in the same project reuse the existing devserver; concurrent projects auto-allocate sequential free ports. Launch the devserver **from the user's project root** (no `cd` first) so the PTY bridge's `claude --resume <sid>` finds the session transcript.
 
    ```bash
-   OUT_DIR="${ARCHITECTURE_REVIEW_DIR:-.architecture-review}"
+   OUT_DIR="${DESIGN_REVIEW_DIR:-.design-review}"
    mkdir -p "$OUT_DIR"
    PORT_FILE="$OUT_DIR/.devserver-port"
 
@@ -136,7 +136,7 @@ When invoked:
    fi
    ```
 
-10. **Return the URL.** Format: `http://<lan-ip>:$PORT/<output-dir-relative-to-cwd>/<filename>.html` (e.g., `http://192.168.1.237:8775/.architecture-review/TT-131-foo-architecture-review.html`).
+10. **Return the URL.** Format: `http://<lan-ip>:$PORT/<output-dir-relative-to-cwd>/<filename>.html` (e.g., `http://192.168.1.237:8775/.design-review/TT-131-foo-design-review.html`).
 
 ## Resume: Hydrate and Refresh
 
@@ -144,7 +144,7 @@ When the user chooses **Resume** at step 2a (or picks a specific file in the mul
 
 1. **Hydrate context.** Read the prior HTML. Extract the `BEFORE_NODES`, `BEFORE_EDGES`, `AFTER_NODES`, `AFTER_EDGES` literals and internalize them. Surface a short summary to the user:
 
-   > Resumed architecture review: N before-nodes, M after-nodes (J new / K modified / L removed). Picking up where you left off — where do you want to focus?
+   > Resumed design review: N before-nodes, M after-nodes (J new / K modified / L removed). Picking up where you left off — where do you want to focus?
 
 2. **Refresh the session id.** Rewrite **only** the `CLAUDE_SESSION = "..."` JS constant. Do not touch the node/edge arrays, `PLAN_NAME`, `LAYOUTS_FILE`, `<title>`, or `<h1>`.
 
@@ -183,7 +183,7 @@ Typical spacing: ~170px vertical gap between tiers, ~200px horizontal gap betwee
 When the reviewer sends feedback via the "Send to Claude" button, a structured bundle arrives in the embedded terminal:
 
 ```
-Here is my architecture-review of <ticket>: <title>:
+Here is my design-review of <ticket>: <title>:
 
 ## Nodes flagged for revision (N)
 ### <label> — <pane> pane (<change>)
@@ -208,7 +208,7 @@ When you receive the bundle:
 
 On the first Send-to-Claude click per browser session, the template prepends a one-time preamble:
 
-> **Context switch:** you are now in the architecture-review playground. The diagram is at `<path>`. Discuss the feedback below conversationally. Do NOT edit the HTML or the layouts JSON until I explicitly say to update. When discussion on a node wraps, ask whether to update the document.
+> **Context switch:** you are now in the design-review playground. The diagram is at `<path>`. Discuss the feedback below conversationally. Do NOT edit the HTML or the layouts JSON until I explicitly say to update. When discussion on a node wraps, ask whether to update the document.
 
 State is tracked via `sessionStorage` keyed off the review doc's filename.
 
@@ -230,9 +230,9 @@ Each generated review includes a "Hand off to terminal" button that copies `clau
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ARCHITECTURE_REVIEW_DIR` | `.architecture-review/` | Where generated review HTML files are written |
-| `ARCHITECTURE_REVIEW_HOST` | auto-detected LAN IP | Override the host in the returned URL |
-| `ARCHITECTURE_REVIEW_PORT` | `8775` | Devserver port |
+| `DESIGN_REVIEW_DIR` | `.design-review/` | Where generated review HTML files are written |
+| `DESIGN_REVIEW_HOST` | auto-detected LAN IP | Override the host in the returned URL |
+| `DESIGN_REVIEW_PORT` | `8775` | Devserver port |
 | `REVIEW_SUITE_NO_FORK` | unset | Set to `1` to disable `--fork-session` and use attach-mode for the embedded terminal (foreground sessions only — bg agents reject re-attach) |
 
 ## Saved Layouts

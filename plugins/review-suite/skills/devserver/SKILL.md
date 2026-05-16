@@ -15,7 +15,7 @@ Launches the review-suite devserver from the user's project root so any HTML fil
 - Browsing arbitrary HTML files served from the project tree (the server is just `SimpleHTTPRequestHandler` plus PUT for `*-layouts.json`).
 - Quickly checking the PTY bridge wiring without authoring a new plan.
 
-If you want to *generate* a new playground, use `/plan-review`, `/architecture-review`, or `/architecture-map` directly — those skills also start the devserver as a side effect, so calling this skill first isn't necessary.
+If you want to *generate* a new playground, use `/plan-review`, `/design-review`, or `/architecture-map` directly — those skills also start the devserver as a side effect, so calling this skill first isn't necessary.
 
 ## Invocation
 
