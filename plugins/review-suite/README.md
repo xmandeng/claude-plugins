@@ -62,7 +62,7 @@ review-suite/
 `bin/devserver.py` is a `SimpleHTTPRequestHandler` plus:
 
 - **PUT `/*-layouts.json`** — atomic write, scoped to spawn cwd, 256 KB cap, path-traversal-safe. Used by architecture/map templates to persist named layouts.
-- **WS `/api/claude?session=<sid>`** — bridges browser `xterm.js` to a local `claude --resume <sid>` PTY. Each generated review HTML embeds the authoring session's id at generation time, so clicking "Send to Claude" continues the exact session that wrote the plan.
+- **WS `/api/claude?session=<sid>`** — bridges browser `xterm.js` to a local `claude --resume <sid> --fork-session` PTY. Each generated review HTML embeds the authoring session's id at generation time; the fork inherits the full conversation context that wrote the plan but runs as an independent working session. The hand-off model is intentional: it lets the playground work from background-agent (`bg`) sessions, which refuse re-attach. Feedback you send from the browser stays in the fork — set `REVIEW_SUITE_NO_FORK=1` to disable forking and use the original attach-mode (foreground sessions only).
 
 Default port: `8765`. Override with `REVIEW_SUITE_PORT`. Override LAN IP with `REVIEW_SUITE_HOST`.
 
