@@ -2222,6 +2222,7 @@ let __claudeReady = false;
 let __claudeTerm = null;
 let __claudeFitAddon = null;
 let __claudeFit = null;
+let __forkedSid = null;
 
 function toggleTerminal() {
   const panel = document.getElementById('termPanel');
@@ -2308,6 +2309,18 @@ function openTerminal() {
     };
     ws.onmessage = (ev) => {
       if (typeof ev.data === 'string') {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg && msg.type === 'forked_session' && typeof msg.sid === 'string') {
+            __forkedSid = msg.sid;
+            const handoffSidEl = document.getElementById('handoffSid');
+            if (handoffSidEl) {
+              handoffSidEl.textContent = __forkedSid;
+              handoffSidEl.title = __forkedSid;
+            }
+            return;
+          }
+        } catch { /* not JSON — fall through to terminal */ }
         term.writeln('\r\n[devserver] ' + ev.data);
         return;
       }
@@ -2348,7 +2361,8 @@ function openTerminal() {
         handoffStatus.textContent = 'No session id embedded in this review doc.';
         return;
       }
-      const cmd = `claude --resume ${CLAUDE_SESSION}`;
+      const resumeSid = __forkedSid || CLAUDE_SESSION;
+      const cmd = `claude --resume ${resumeSid}`;
       let copied = false;
       try { await navigator.clipboard.writeText(cmd); copied = true; }
       catch { /* non-HTTPS or denied — fall through */ }
