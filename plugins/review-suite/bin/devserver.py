@@ -230,7 +230,7 @@ def _pty_spawn(argv, cwd, env, dimensions=(40, 120)):
 
 
 def bridge_ws_to_claude_pty(sock: socket.socket, cwd: str, session_id: str) -> None:
-    """Spawn `claude --resume <session_id>` in a PTY and bridge stdin/stdout to the websocket.
+    """Spawn `claude --resume <session_id> --fork-session` in a PTY and bridge stdin/stdout to the websocket.
 
     Wire protocol:
       - BINARY frames in both directions carry raw PTY bytes (terminal I/O).
@@ -264,8 +264,18 @@ def bridge_ws_to_claude_pty(sock: socket.socket, cwd: str, session_id: str) -> N
     # If `claude --resume <sid>` fails because the session id doesn't match a
     # resumable transcript, that's a real configuration error — we surface it
     # rather than masking by silently falling back to a fresh session.
+    #
+    # --fork-session by default so the embedded terminal works whether the
+    # authoring session is foreground or a background agent. The review/map
+    # UX is hand-off: once the playground renders, the initiating session has
+    # done its job — the fork inherits the full conversation context and
+    # becomes the working session. Set REVIEW_SUITE_NO_FORK=1 to revert to
+    # attach-mode (foreground only — bg agents will reject the attach).
+    args = ["claude", "--resume", session_id]
+    if not os.environ.get("REVIEW_SUITE_NO_FORK"):
+        args.append("--fork-session")
     try:
-        proc = _pty_spawn(["claude", "--resume", session_id], cwd=cwd, env=env)
+        proc = _pty_spawn(args, cwd=cwd, env=env)
     except Exception as exc:
         try:
             ws_send_frame(

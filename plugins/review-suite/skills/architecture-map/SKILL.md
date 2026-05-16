@@ -245,7 +245,7 @@ State is tracked via `sessionStorage` keyed off the map doc's filename.
 
 ## Session Resume
 
-The devserver's PTY bridge spawns `claude --resume <session-id>` using the sid embedded in the generated HTML at authoring time (steps 5a and 7). This guarantees the browser resumes the exact session that authored the map, even when multiple Claude Code sessions run concurrently in the same project.
+The devserver's PTY bridge spawns `claude --resume <session-id> --fork-session` using the sid embedded in the generated HTML at authoring time (steps 5a and 7). The fork inherits the full conversation context that authored the map but runs as an independent working session — once the playground renders, the initiating session has done its job; the fork becomes the working session. Forking by default also lets the playground operate from background-agent (`bg`) sessions, which reject `claude --resume` re-attach. Set `REVIEW_SUITE_NO_FORK=1` to disable forking and use attach-mode (foreground sessions only).
 
 ### Handoff
 
@@ -264,6 +264,7 @@ Each generated map includes a "Hand off to terminal" button that copies `claude 
 | `ARCHITECTURE_MAP_DIR` | `.architecture-map/` | Where generated map HTML files are written |
 | `ARCHITECTURE_MAP_HOST` | auto-detected LAN IP | Override the host in the returned URL |
 | `ARCHITECTURE_MAP_PORT` | `8785` | Preferred devserver port (scan starts here) |
+| `REVIEW_SUITE_NO_FORK` | unset | Set to `1` to disable `--fork-session` and use attach-mode for the embedded terminal (foreground sessions only — bg agents reject re-attach) |
 
 ## Saved Layouts
 

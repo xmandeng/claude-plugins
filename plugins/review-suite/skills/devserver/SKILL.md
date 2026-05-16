@@ -108,6 +108,7 @@ echo "Devserver: http://$LAN_IP:$PORT/"
 |---|---|---|
 | `REVIEW_SUITE_HOST` | auto-detected LAN IP | Override host in printed URL |
 | `REVIEW_SUITE_PORT` | `8765` | Override default port |
+| `REVIEW_SUITE_NO_FORK` | unset | Set to `1` to disable `--fork-session` and use attach-mode for the embedded terminal (foreground sessions only — bg agents reject re-attach) |
 
 These are honored by the devserver binary itself; the skill passes through any port arg as `argv[1]`.
 
