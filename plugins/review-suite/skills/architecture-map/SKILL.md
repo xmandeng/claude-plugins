@@ -81,6 +81,37 @@ When invoked:
 
 3. **Construct filename.** `<output-dir>/<ticket>-<slugified-scope>-architecture-map.html` (lowercase, hyphens). If no ticket, use `<slugified-scope>-architecture-map.html`.
 
+### Recommended path: render via the generator (steps 4–8 in one command)
+
+The preferred way to produce the HTML is **not** to inline-patch the template by hand. Build a JSON spec describing the map and pipe it through the bundled generator. The generator uses `json.dumps` for all data injection (guaranteeing correct JS escaping), validates the inline JS via `node --check`, and refuses to leave a broken file in place.
+
+```bash
+cat <<'JSON' | python3 "${CLAUDE_PLUGIN_ROOT}/bin/render-review-html.py"
+{
+  "kind": "architecture-map",
+  "ticket": "QUE-123",
+  "title": "<map title>",
+  "session_id": "<sid from review-suite-session-id hook>",
+  "output_path": ".architecture-map/QUE-123-<slug>-architecture-map.html",
+  "layouts_file": "QUE-123-<slug>-layouts.json",
+  "scope_header": "<free-form description shown above the map>",
+  "before_nodes": [],
+  "before_edges": [],
+  "after_nodes":  [ { "id": "...", "x": 100, "y": 100, "layer": "...", "label": "...", "type": "...", "desc": "..." } ],
+  "after_edges":  [ { "from": "a", "to": "b" } ]
+}
+```
+
+(Architecture-map uses a single-pane view: put everything in `after_nodes`/`after_edges` and leave the `before_*` arrays empty.)
+
+On success the generator prints the absolute output path on stdout. On a validator failure (broken inline JS) it exits non-zero and removes the partial file — you will not accidentally serve a blank page.
+
+**Skip steps 4–8 below entirely if you use the generator.** Jump to step 9 (start the devserver).
+
+### Fallback path: inline-patch the template
+
+If the generator is unavailable (no `python3`, restricted environment, etc.), do the patching manually. Read the [Common pitfalls](#common-pitfalls-when-inline-patching) section first — this is where blank pages come from.
+
 4. **Read the template.** `${CLAUDE_PLUGIN_ROOT}/assets/map-template.html`.
 
 5. **Ask the main agent for node + edge data.** Node schema (mirrors the source `architecture_playground.html`):
@@ -265,6 +296,18 @@ Each generated map includes a "Hand off to terminal" button that copies `claude 
 | `ARCHITECTURE_MAP_HOST` | auto-detected LAN IP | Override the host in the returned URL |
 | `ARCHITECTURE_MAP_PORT` | `8785` | Preferred devserver port (scan starts here) |
 | `REVIEW_SUITE_NO_FORK` | unset | Set to `1` to disable `--fork-session` and use attach-mode for the embedded terminal (foreground sessions only — bg agents reject re-attach) |
+
+## Common pitfalls when inline-patching
+
+These traps are why `bin/render-review-html.py` exists. If you used the generator (recommended path above), you don't need to worry about them. If you're inline-patching the template by hand, read carefully.
+
+1. **`re.sub` interprets backslash escapes in the replacement string.** Don't do `re.sub(pat, replacement_string, text)` when the replacement contains `\n`, `\1`, `\g<...>`, etc. — `re.sub` processes those as escape sequences and rewrites your output. Use a lambda replacement (`re.sub(pat, lambda m: replacement, text)`) or plain `str.replace()` instead.
+
+2. **Single-quoted JS strings cannot span lines.** Multi-line `code:` or `details:` fields must use backtick template literals or `\n` escape sequences inside a single-quoted string — never a real newline inside a single-quoted JS string.
+
+3. **Always validate inline JS before returning the URL.** Extract the `const BEFORE_NODES = ...;`, `const AFTER_NODES = ...;` (etc.) declarations and pipe through `node --check`. If parsing fails, the page renders blank.
+
+4. **`$CLAUDE_JOB_DIR` is harness-managed and may be unset.** Wrap any usage with a fallback: `SCRATCH="${CLAUDE_JOB_DIR:-$(mktemp -d -t claude-job-XXXXXX)}"`.
 
 ## Saved Layouts
 

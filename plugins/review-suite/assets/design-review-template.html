@@ -948,6 +948,12 @@ const AFTER_NODES = [
     label: 'NewComponent', type: 'Description',
     desc: 'What this new component does.',
     change: 'new',
+    // Multi-line `code:` fields MUST use a backtick template literal
+    // (or `\n` escapes in a single-quoted string). A real newline inside
+    // single quotes is a JS syntax error and renders the page blank.
+    code: `def example(arg):
+    """Replace this with the real snippet."""
+    return arg + 1`,
   },
   { id: 'component-c', x: 380, y: 370, layer: 'queue',
     label: 'ComponentC', type: 'Description',

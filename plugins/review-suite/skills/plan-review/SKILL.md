@@ -70,6 +70,35 @@ When invoked:
 
 3. **Construct filename.** `<output-dir>/<ticket>-<slugified-title>-review.html` (lowercase, hyphens). If no ticket, use `<slugified-title>-review.html`.
 
+### Recommended path: render via the generator (steps 4–8 in one command)
+
+The preferred way to produce the HTML is **not** to inline-patch the template by hand. Build a JSON spec describing the plan and pipe it through the bundled generator. The generator uses `json.dumps` for all data injection (guaranteeing correct JS escaping), validates the inline JS via `node --check`, and refuses to leave a broken file in place.
+
+```bash
+cat <<'JSON' | python3 "${CLAUDE_PLUGIN_ROOT}/bin/render-review-html.py"
+{
+  "kind": "plan-review",
+  "ticket": "QUE-123",
+  "title": "<plan title>",
+  "session_id": "<sid from review-suite-session-id hook>",
+  "output_path": ".plan-review/QUE-123-<slug>-review.html",
+  "doc_sections": [
+    { "id": "context", "title": "Context", "content": "Markdown content here." },
+    { "id": "next",    "title": "Next",    "content": "More content." }
+  ],
+  "prior_approvals": {}
+}
+JSON
+```
+
+On success the generator prints the absolute output path on stdout. On a validator failure (broken inline JS) it exits non-zero and removes the partial file — you will not accidentally serve a blank page.
+
+**Skip steps 4–8 below entirely if you use the generator.** Jump to step 9 (start the devserver).
+
+### Fallback path: inline-patch the template
+
+If the generator is unavailable (no `python3`, restricted environment, etc.), do the patching manually. Read the [Common pitfalls](#common-pitfalls-when-inline-patching) section first — this is where blank pages come from.
+
 4. **Read the template.** `${CLAUDE_PLUGIN_ROOT}/assets/review-template.html`.
 
 5. **Ask the main agent to provide plan sections.** Each section needs:
@@ -185,6 +214,18 @@ Each generated review includes a "Hand off to terminal" button that copies `clau
 | `PLAN_REVIEW_HOST` | auto-detected LAN IP | Override the host in the returned URL |
 | `PLAN_REVIEW_PORT` | `8765` | Devserver port |
 | `REVIEW_SUITE_NO_FORK` | unset | Set to `1` to disable `--fork-session` and use attach-mode for the embedded terminal (foreground sessions only — bg agents reject re-attach) |
+
+## Common pitfalls when inline-patching
+
+These traps are why `bin/render-review-html.py` exists. If you used the generator (recommended path above), you don't need to worry about them. If you're inline-patching the template by hand, read carefully.
+
+1. **`re.sub` interprets backslash escapes in the replacement string.** Don't do `re.sub(pat, replacement_string, text)` when the replacement contains `\n`, `\1`, `\g<...>`, etc. — `re.sub` processes those as escape sequences and rewrites your output. Use a lambda replacement (`re.sub(pat, lambda m: replacement, text)`) or plain `str.replace()` instead.
+
+2. **Single-quoted JS strings cannot span lines.** Section `content` is a backtick template literal in the template (multi-line OK), but if you splice in JS values elsewhere, use either backtick template literals or `\n` escape sequences inside single-quoted strings — never a real newline inside a single-quoted JS string.
+
+3. **Always validate inline JS before returning the URL.** Extract the `const docSections = ...;` and `const priorApprovals = ...;` declarations and pipe through `node --check`. If parsing fails, the page renders blank.
+
+4. **`$CLAUDE_JOB_DIR` is harness-managed and may be unset.** Wrap any usage with a fallback: `SCRATCH="${CLAUDE_JOB_DIR:-$(mktemp -d -t claude-job-XXXXXX)}"`.
 
 ## Content Format Reference
 
