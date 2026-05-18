@@ -988,6 +988,11 @@ def example_function(arg: str) -> bool:
     // authoring session's id. The terminal panel uses this to spawn
     // `claude --resume <sid>` via the devserver's /api/claude?session= endpoint.
     const CLAUDE_SESSION = "SESSION_ID_HERE";
+    // QUE-226: ACTIVE_SESSION holds the SID of the fork spawned on first WS
+    // connect; subsequent connects re-attach to it. Devserver mutates this
+    // constant in-place after the first fork via atomic write. Blank it
+    // (set back to "") to reset and re-fork from CLAUDE_SESSION on next open.
+    const ACTIVE_SESSION = "";
 
     // Persistence — save/restore review state across sessions
     const STORAGE_KEY = 'review-state:' + PLAN_NAME;
@@ -1656,7 +1661,12 @@ def example_function(arg: str) -> bool:
           return;
         }
         const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const url = `${proto}//${location.host}/api/claude?session=${encodeURIComponent(CLAUDE_SESSION)}`;
+        // QUE-226: pass the playground HTML path so the devserver can read
+        // and update this HTML's ACTIVE_SESSION constant and keep us
+        // attached to the same fork across refreshes / "Send to Claude"
+        // clicks / reopens.
+        const playgroundPath = location.pathname.replace(/^\//, '');
+        const url = `${proto}//${location.host}/api/claude?session=${encodeURIComponent(CLAUDE_SESSION)}&playground=${encodeURIComponent(playgroundPath)}`;
         setStatus('connecting…');
         let ws;
         try {
@@ -1683,7 +1693,12 @@ def example_function(arg: str) -> bool:
           if (typeof ev.data === 'string') {
             try {
               const msg = JSON.parse(ev.data);
-              if (msg && msg.type === 'forked_session' && typeof msg.sid === 'string') {
+              // QUE-226: devserver sends 'active_session' for both attach
+              // and fork modes (msg.mode distinguishes). Pre-QUE-226
+              // 'forked_session' is still accepted for backward compat.
+              const isSessionMsg = msg && typeof msg.sid === 'string'
+                && (msg.type === 'active_session' || msg.type === 'forked_session');
+              if (isSessionMsg) {
                 __forkedSid = msg.sid;
                 const handoffSidEl = document.getElementById('handoffSid');
                 if (handoffSidEl) {

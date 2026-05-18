@@ -51,7 +51,7 @@ review-suite/
 `bin/devserver.py` is a `SimpleHTTPRequestHandler` plus:
 
 - **PUT `/*-layouts.json`** — atomic write, scoped to spawn cwd, 256 KB cap, path-traversal-safe. Used by design-review / architecture-map templates to persist named layouts.
-- **WS `/api/claude?session=<sid>`** — bridges browser `xterm.js` to a local `claude --resume <sid> --fork-session` PTY. Each generated playground embeds the authoring session id at generation time; the fork inherits the full conversation context that authored the doc but runs as an independent working session. The hand-off model is intentional: it lets the playground work from background-agent (`bg`) sessions, which refuse re-attach. Set `REVIEW_SUITE_NO_FORK=1` to disable forking and use attach-mode (foreground sessions only).
+- **WS `/api/claude?session=<sid>&playground=<rel-path>`** — bridges browser `xterm.js` to a local `claude` PTY. Each playground forks exactly once: on the first WS connect, the devserver spawns `claude --resume <authoring-sid> --fork-session` and writes the new fork's SID into the HTML's `ACTIVE_SESSION` JS constant via atomic in-place mutation. Every subsequent open reads `ACTIVE_SESSION` from the HTML and re-attaches to the same fork via `claude --resume <stored-sid>` — no new fork, no context loss across refreshes or "Send to Claude" clicks. Blank out `ACTIVE_SESSION` in the HTML to start fresh. The `playground` query param tells the devserver which HTML triggered the WS so it can read/write the constant; if absent (older rendered HTMLs without `ACTIVE_SESSION`), the devserver falls back to the pre-QUE-226 always-fork behavior for backward compat.
 
 Default port: `8765`. Override with `REVIEW_SUITE_PORT`. Override LAN IP with `REVIEW_SUITE_HOST`.
 
