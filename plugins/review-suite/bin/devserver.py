@@ -34,6 +34,7 @@ import struct
 import sys
 import termios
 import threading
+import uuid
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -271,9 +272,16 @@ def bridge_ws_to_claude_pty(sock: socket.socket, cwd: str, session_id: str) -> N
     # done its job — the fork inherits the full conversation context and
     # becomes the working session. Set REVIEW_SUITE_NO_FORK=1 to revert to
     # attach-mode (foreground only — bg agents will reject the attach).
+    #
+    # When forking, we pre-generate the fork's session id via --session-id so
+    # the embedded terminal's handoff UI can surface a `claude --resume <sid>`
+    # command that actually reaches the working session (not the pre-fork
+    # parent, which contains none of the playground work).
     args = ["claude", "--resume", session_id]
+    forked_sid = ""
     if not os.environ.get("REVIEW_SUITE_NO_FORK"):
-        args.append("--fork-session")
+        forked_sid = str(uuid.uuid4())
+        args.extend(["--fork-session", "--session-id", forked_sid])
     try:
         proc = _pty_spawn(args, cwd=cwd, env=env)
     except Exception as exc:
@@ -287,6 +295,16 @@ def bridge_ws_to_claude_pty(sock: socket.socket, cwd: str, session_id: str) -> N
         except OSError:
             pass
         return
+
+    if forked_sid:
+        try:
+            ws_send_frame(
+                sock,
+                OP_TEXT,
+                json.dumps({"type": "forked_session", "sid": forked_sid}).encode(),
+            )
+        except OSError:
+            pass
 
     pty_fd = proc.fd
     stop = threading.Event()
