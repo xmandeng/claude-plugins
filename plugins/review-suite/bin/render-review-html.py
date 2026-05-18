@@ -316,7 +316,13 @@ def validate_inline_js(html: str, kind: str) -> None:
         return  # validator unavailable; trust json.dumps
 
     extracted_blocks: list[str] = []
-    for var in KIND_DATA_VARS[kind] + ["PLAN_NAME", "CLAUDE_SESSION", "LAYOUTS_FILE", "SCOPE_HEADER"]:
+    for var in KIND_DATA_VARS[kind] + [
+        "PLAN_NAME",
+        "CLAUDE_SESSION",
+        "ACTIVE_SESSION",
+        "LAYOUTS_FILE",
+        "SCOPE_HEADER",
+    ]:
         # Pull the first ``const VAR = ...;`` for each variable. This uses
         # the same depth-tracking walk as replace_declaration so it stops at
         # the actual end of the literal, not the first stray semicolon.

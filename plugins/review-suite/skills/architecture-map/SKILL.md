@@ -276,7 +276,9 @@ State is tracked via `sessionStorage` keyed off the map doc's filename.
 
 ## Session Resume
 
-The devserver's PTY bridge spawns `claude --resume <session-id> --fork-session` using the sid embedded in the generated HTML at authoring time (steps 5a and 7). The fork inherits the full conversation context that authored the map but runs as an independent working session — once the playground renders, the initiating session has done its job; the fork becomes the working session. Forking by default also lets the playground operate from background-agent (`bg`) sessions, which reject `claude --resume` re-attach. Set `REVIEW_SUITE_NO_FORK=1` to disable forking and use attach-mode (foreground sessions only).
+The devserver's PTY bridge spawns `claude --resume <session-id> --fork-session` **exactly once** per playground — on the first WebSocket connect after the HTML is rendered. The new fork's session id is written into the HTML's `ACTIVE_SESSION` JS constant via targeted in-place mutation (tmp + atomic rename). Every subsequent open (browser refresh, "Send to Claude" click, next-day return) reads `ACTIVE_SESSION` from the HTML and re-attaches to the same fork via `claude --resume <stored-sid>` — no new fork is spawned. One session per playground for its lifetime; context isn't thrown away by a re-open. The HTML is the only artifact — no sidecar state file. Blank out `ACTIVE_SESSION` in the HTML (set it back to `""`) to reset and re-fork on the next open.
+
+If the stored session is unreachable when re-attaching (e.g., the transcript was archived), the `claude` CLI's error surfaces in the embedded terminal. No silent fork-fallback — the user sees the failure and can blank `ACTIVE_SESSION` to recover deliberately.
 
 ### Handoff
 
@@ -295,7 +297,6 @@ Each generated map includes a "Hand off to terminal" button that copies `claude 
 | `ARCHITECTURE_MAP_DIR` | `.architecture-map/` | Where generated map HTML files are written |
 | `ARCHITECTURE_MAP_HOST` | auto-detected LAN IP | Override the host in the returned URL |
 | `ARCHITECTURE_MAP_PORT` | `8785` | Preferred devserver port (scan starts here) |
-| `REVIEW_SUITE_NO_FORK` | unset | Set to `1` to disable `--fork-session` and use attach-mode for the embedded terminal (foreground sessions only — bg agents reject re-attach) |
 
 ## Common pitfalls when inline-patching
 
