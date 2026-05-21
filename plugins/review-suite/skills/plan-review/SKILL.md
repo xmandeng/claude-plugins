@@ -1,7 +1,7 @@
 ---
 name: plan-review
 description: Create an interactive HTML review playground for an implementation plan. Generates a section-by-section reviewable document with approve/revise/question controls and a "Send to Claude" button that delivers feedback directly to a live Claude Code session. Usage - /plan-review [<ticket>]
-allowed-tools: Read Write Edit Bash(mkdir:*) Bash(cp:*) Bash(lsof:*) Bash(python3:*) Bash(ls:*) Bash(cat:*) Bash(echo:*)
+allowed-tools: Read Write Edit Bash(mkdir:*) Bash(cp:*) Bash(lsof:*) Bash(python3:*) Bash(ls:*) Bash(cat:*) Bash(echo:*) Bash(pgrep:*) Bash(awk:*)
 argument-hint: "[<ticket>]"
 ---
 
@@ -127,14 +127,33 @@ If the generator is unavailable (no `python3`, restricted environment, etc.), do
    PORT_FILE="$OUT_DIR/.devserver-port"
 
    PORT=""
+
+   # 1. Fast path: reuse via the recorded port file.
    if [ -f "$PORT_FILE" ]; then
      SAVED=$(cat "$PORT_FILE")
-     # Reuse if devserver is still listening on the recorded port
      lsof -i ":$SAVED" >/dev/null 2>&1 && PORT="$SAVED"
    fi
 
+   # 2. Fallback: discover an existing review-suite devserver by process pattern.
+   #    Catches the orphan-from-prior-session case where the port file is missing
+   #    or stale (e.g., forked session, fresh checkout). Without this, a fresh
+   #    scan picks the first free port and spawns a duplicate, leaving the orphan
+   #    listening. Multi-agent-safe — never kills an existing devserver, only
+   #    reuses one when found.
    if [ -z "$PORT" ]; then
-     # Scan for first free port in 8765-8799
+     EXISTING_PID=$(pgrep -f "review-suite.*devserver\.py" | head -1)
+     if [ -n "$EXISTING_PID" ]; then
+       EXISTING_PORT=$(lsof -P -n -p "$EXISTING_PID" 2>/dev/null \
+         | awk '/LISTEN/ {split($9, a, ":"); print a[length(a)]; exit}')
+       if [ -n "$EXISTING_PORT" ]; then
+         PORT="$EXISTING_PORT"
+         echo "$PORT" > "$PORT_FILE"
+       fi
+     fi
+   fi
+
+   # 3. Spawn fresh on the first free port.
+   if [ -z "$PORT" ]; then
      PORT=8765
      while lsof -i ":$PORT" >/dev/null 2>&1 && [ "$PORT" -lt 8800 ]; do
        PORT=$((PORT + 1))
