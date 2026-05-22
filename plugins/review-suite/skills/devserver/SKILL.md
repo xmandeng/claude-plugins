@@ -2,7 +2,7 @@
 name: devserver
 description: Start (or reuse) the bundled review-suite devserver to browse generated review/architecture/map HTML files in the current project. Useful for opening prior `.plan-review/*.html` files without having to invoke a full review skill. Usage - /devserver [port]
 user-invocable: true
-allowed-tools: Bash(lsof:*) Bash(python3:*) Bash(mkdir:*) Bash(cat:*) Bash(echo:*) Bash(hostname:*) Bash(awk:*) Bash(pgrep:*)
+allowed-tools: Bash(python3:*) Bash(cat:*) Bash(echo:*) Bash(ls:*) Bash(eval:*)
 ---
 
 # Devserver Skill
@@ -26,11 +26,13 @@ If you want to *generate* a new playground, use `/plan-review`, `/design-review`
 
 ## How It Works
 
-1. **Reuse if running (port-file fast path).** Checks `<project-root>/.plan-review/.devserver-port` for a saved port. If a server is still listening on that port, reuse it.
-2. **Reuse via process-pattern fallback.** If the port file is missing or stale (e.g., a fork or forked session lost track), scan running processes for `review-suite.*devserver.py` and reuse its listening port. Catches orphan devservers from prior sessions and avoids spawning duplicates. Multi-agent-safe — never kills an existing devserver.
-3. **Otherwise start fresh.** Scans 8765-8799 for the first free port (or honors the user's explicit port arg) and launches `${CLAUDE_PLUGIN_ROOT}/bin/devserver.py <port>` from the user's project root (NOT `cd`'d into a subdirectory — paths in URLs include the directory prefix).
-4. **Persist the port** to `.plan-review/.devserver-port` so the review skills reuse it on their next invocation.
-5. **Return the LAN-IP URL** so the user can open it from their local browser via VS Code Remote SSH port forwarding.
+Project-scoped discovery is implemented inside the devserver binary itself. The skill is a one-line invocation; all logic lives in `bin/devserver.py find-or-start`.
+
+1. **Reuse via port-file fast path.** Checks `<project-root>/.plan-review/.devserver-port` for a saved port. If a listener on that port has `/proc/<pid>/cwd` resolving to this project root, reuse it.
+2. **Reuse via process-pattern fallback, cwd-filtered.** If the port file is missing or stale, scan `pgrep -f "review-suite.*devserver\.py"` matches and pick the first whose `/proc/<pid>/cwd` matches this project root. Devservers running in **other** project roots are intentionally NOT reused — they serve the wrong static root and would attach the PTY bridge to the wrong transcript.
+3. **Otherwise start fresh.** Pick the first free port in 8765-8799 (or honor the explicit port arg), spawn `python3 bin/devserver.py <port>` in this project's cwd with `start_new_session=True`, then wait until the port begins listening.
+4. **Persist the port** to `<project-root>/.plan-review/.devserver-port`.
+5. **Print `URL=...`, `PORT=...`, `LAN_IP=...` to stdout** so the caller can `eval` the output. The URL uses the host's LAN IP so VS Code's port forwarder can hand it to the user's local browser.
 
 The devserver supports:
 
@@ -42,85 +44,28 @@ The devserver supports:
 
 When invoked:
 
-1. **Parse arg.** Optional first arg = port (integer). Default: scan 8765-8799 for first free port.
+1. **Parse arg.** Optional first arg = port (integer). Pass it through to `find-or-start`. Otherwise omit.
 
-2. **Detect prior server (port-file fast path).** Read `<cwd>/.plan-review/.devserver-port` if it exists. If `lsof -i :<saved-port>` reports something listening, reuse — emit the URL and exit. Do NOT spawn a second devserver on the same port.
+2. **Invoke `find-or-start`.** This handles all reuse, spawn, and port-persist logic internally and prints a `URL=…`, `PORT=…`, `LAN_IP=…` envelope to stdout. `eval` the output to populate shell vars.
 
-3. **Detect prior server (process-pattern fallback).** If no port from step 2 *and* the user did not supply an explicit port arg, run `pgrep -f "review-suite.*devserver\.py"`. If a PID is found, extract its listening port via `lsof -P -n -p <pid>` (parse the LISTEN line). Reuse that port, persist it to the port file, and exit. This catches orphan devservers from prior sessions that the port file no longer references.
-
-4. **Pick a port.**
-   - If the user supplied a port arg, use it. Fail loudly if it's already in use (`lsof -i :<port>`).
-   - Otherwise scan 8765-8799 sequentially until `lsof -i :<port>` reports unused.
-
-5. **Launch.** Run `python3 "${CLAUDE_PLUGIN_ROOT}/bin/devserver.py" <port> &` from the **current working directory** (the user's project root). Do NOT `cd` into a subdirectory first — the PTY bridge spawns `claude --resume <sid>` from this cwd, and any review HTML's session ID was authored under this project, so the cwd must match.
-
-6. **Persist port.** `mkdir -p .plan-review && echo <port> > .plan-review/.devserver-port`
-
-7. **Resolve LAN IP.** `hostname -I | awk '{print $1}'` — this is what VS Code's port forwarder needs.
-
-8. **Return URLs to the user.** Show:
-   - Server root: `http://<lan-ip>:<port>/`
-   - Tip: append the directory + filename, e.g. `http://<lan-ip>:<port>/.plan-review/TT-128-foo-review.html`
+3. **Return URLs to the user.** Show:
+   - Server root: `$URL`
+   - Tip: append the directory + filename, e.g. `${URL}.plan-review/TT-128-foo-review.html`
    - List any existing `.plan-review/*.html` files as clickable suggestions.
 
-9. **Mention** that the user can stop the server later with `kill $(lsof -t -i :<port>)`.
+4. **Mention** that the user can stop the server later with `kill $(lsof -t -i :$PORT)`.
 
 ## Reference Implementation
 
 ```bash
 PORT_ARG="${1:-}"
-OUT_DIR=".plan-review"
-mkdir -p "$OUT_DIR"
-PORT_FILE="$OUT_DIR/.devserver-port"
 
-# 1. Fast path: reuse via the recorded port file (skipped if user gave an explicit port).
-if [ -z "$PORT_ARG" ] && [ -f "$PORT_FILE" ]; then
-  SAVED=$(cat "$PORT_FILE")
-  if lsof -i ":$SAVED" >/dev/null 2>&1; then
-    PORT="$SAVED"
-    echo "Reusing devserver on port $PORT (from port file)"
-  fi
-fi
+# find-or-start handles: port-file fast path, pgrep+cwd-match fallback,
+# free-port pick, background spawn, port-file persist. Output is a three-line
+# `key='value'` envelope — eval to populate $URL, $PORT, $LAN_IP.
+eval "$(python3 "${CLAUDE_PLUGIN_ROOT}/bin/devserver.py" find-or-start ${PORT_ARG:+"$PORT_ARG"})"
 
-# 2. Fallback: discover an existing review-suite devserver by process pattern.
-#    Catches orphan devservers when the port file is missing or stale. Skipped
-#    if the user gave an explicit port (they want that specific port, not
-#    whatever happens to be running). Multi-agent-safe — never kills an
-#    existing devserver, only reuses one when found.
-if [ -z "${PORT:-}" ] && [ -z "$PORT_ARG" ]; then
-  EXISTING_PID=$(pgrep -f "review-suite.*devserver\.py" | head -1)
-  if [ -n "$EXISTING_PID" ]; then
-    EXISTING_PORT=$(lsof -P -n -p "$EXISTING_PID" 2>/dev/null \
-      | awk '/LISTEN/ {split($9, a, ":"); print a[length(a)]; exit}')
-    if [ -n "$EXISTING_PORT" ]; then
-      PORT="$EXISTING_PORT"
-      echo "$PORT" > "$PORT_FILE"
-      echo "Reusing devserver on port $PORT (discovered via pgrep; PID $EXISTING_PID)"
-    fi
-  fi
-fi
-
-# 3. Pick a port and spawn fresh.
-if [ -z "${PORT:-}" ]; then
-  if [ -n "$PORT_ARG" ]; then
-    PORT="$PORT_ARG"
-    if lsof -i ":$PORT" >/dev/null 2>&1; then
-      echo "Port $PORT is in use" >&2
-      exit 1
-    fi
-  else
-    PORT=8765
-    while lsof -i ":$PORT" >/dev/null 2>&1 && [ "$PORT" -lt 8800 ]; do
-      PORT=$((PORT + 1))
-    done
-  fi
-  python3 "${CLAUDE_PLUGIN_ROOT}/bin/devserver.py" "$PORT" &
-  echo "$PORT" > "$PORT_FILE"
-  sleep 1
-fi
-
-LAN_IP=$(hostname -I | awk '{print $1}')
-echo "Devserver: http://$LAN_IP:$PORT/"
+echo "Devserver: $URL"
 ```
 
 ## Environment Variable Reference

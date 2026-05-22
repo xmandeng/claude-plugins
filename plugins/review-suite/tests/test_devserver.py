@@ -500,3 +500,368 @@ class TestDoPutRejections:
         handler.do_PUT()
         # Nothing at all should have been written
         assert list(tmp_path.iterdir()) == []
+
+
+# =============================================================================
+# TT-150: project-scoped discovery — helpers operate on subprocess output and
+# /proc/<pid>/cwd. We mock the subprocess + os.readlink boundary; nothing here
+# actually spawns processes.
+# =============================================================================
+
+
+def _completed(stdout: str, returncode: int = 0):
+    """Build a subprocess.CompletedProcess stub with the given stdout."""
+    import subprocess
+    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+
+
+class TestLsofListeningPids:
+    def test_parses_lsof_t_output(self):
+        with patch("devserver.subprocess.run") as run:
+            run.return_value = _completed("1234\n5678\n")
+            assert devserver.lsof_listening_pids(8765) == [1234, 5678]
+
+    def test_empty_output_returns_empty_list(self):
+        with patch("devserver.subprocess.run") as run:
+            run.return_value = _completed("")
+            assert devserver.lsof_listening_pids(8765) == []
+
+    def test_lsof_missing_returns_empty_list(self):
+        with patch("devserver.subprocess.run", side_effect=FileNotFoundError()):
+            assert devserver.lsof_listening_pids(8765) == []
+
+    def test_skips_garbage_lines(self):
+        with patch("devserver.subprocess.run") as run:
+            run.return_value = _completed("1234\nnot-a-pid\n5678\n")
+            assert devserver.lsof_listening_pids(8765) == [1234, 5678]
+
+
+class TestPidCwd:
+    def test_returns_resolved_path(self, tmp_path):
+        with patch("devserver.os.readlink", return_value=str(tmp_path)):
+            assert devserver.pid_cwd(1234) == tmp_path.resolve()
+
+    def test_returns_none_on_oserror(self):
+        with patch("devserver.os.readlink", side_effect=OSError()):
+            assert devserver.pid_cwd(1234) is None
+
+
+class TestDevserverOnPortMatchesCwd:
+    def test_listener_matching_cwd_returns_true(self, tmp_path):
+        with (
+            patch("devserver.lsof_listening_pids", return_value=[1234]),
+            patch("devserver.pid_cwd", return_value=tmp_path.resolve()),
+        ):
+            assert devserver.devserver_on_port_matches_cwd(8765, tmp_path.resolve())
+
+    def test_listener_other_cwd_returns_false(self, tmp_path):
+        other = tmp_path / "other"
+        other.mkdir()
+        with (
+            patch("devserver.lsof_listening_pids", return_value=[1234]),
+            patch("devserver.pid_cwd", return_value=other.resolve()),
+        ):
+            assert not devserver.devserver_on_port_matches_cwd(8765, tmp_path.resolve())
+
+    def test_no_listener_returns_false(self, tmp_path):
+        with patch("devserver.lsof_listening_pids", return_value=[]):
+            assert not devserver.devserver_on_port_matches_cwd(8765, tmp_path.resolve())
+
+    def test_first_pid_mismatch_second_match_returns_true(self, tmp_path):
+        # SO_REUSEPORT can produce multiple LISTEN-ers — verify the search
+        # doesn't bail on the first non-match.
+        other = tmp_path / "other"
+        other.mkdir()
+        cwds = iter([other.resolve(), tmp_path.resolve()])
+        with (
+            patch("devserver.lsof_listening_pids", return_value=[1234, 5678]),
+            patch("devserver.pid_cwd", side_effect=lambda _: next(cwds)),
+        ):
+            assert devserver.devserver_on_port_matches_cwd(8765, tmp_path.resolve())
+
+
+class TestListeningPortForPid:
+    # /proc/net/tcp LISTEN row, hex port 0x2235 = 8757.
+    _LISTEN_ROW = (
+        "sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+        "   0: 00000000:2235 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 99999 1 0000000000000000 100 0 0 10 0\n"
+    )
+
+    def _patch_open_returning(self, text):
+        # open() is called once per /proc/net/tcp{,6} read in the function
+        # under test. Return a fresh StringIO each call so iteration starts
+        # fresh both times.
+        def fake_open(path, *args, **kwargs):
+            assert path in ("/proc/net/tcp", "/proc/net/tcp6"), path
+            del args, kwargs
+            return io.StringIO(text)
+        return patch("builtins.open", side_effect=fake_open)
+
+    def test_returns_port_for_pid_owning_listen_socket(self):
+        with (
+            patch("devserver.socket_inodes_for_pid", return_value={"99999"}),
+            self._patch_open_returning(self._LISTEN_ROW),
+        ):
+            assert devserver.listening_port_for_pid(1234) == 8757
+
+    def test_returns_none_when_pid_has_no_sockets(self):
+        with patch("devserver.socket_inodes_for_pid", return_value=set()):
+            assert devserver.listening_port_for_pid(1234) is None
+
+    def test_returns_none_when_pid_inode_not_in_listen_table(self):
+        # Pid owns inode 12345, but the listen table only has inode 99999.
+        with (
+            patch("devserver.socket_inodes_for_pid", return_value={"12345"}),
+            self._patch_open_returning(self._LISTEN_ROW),
+        ):
+            assert devserver.listening_port_for_pid(1234) is None
+
+    def test_skips_non_listen_rows(self):
+        # State 01 = ESTABLISHED — must not be returned.
+        established = (
+            "sl  local_address rem_address   st\n"
+            "   0: 00000000:2235 0A000001:1F90 01 00000000:00000000 00:00000000 00000000 0 0 99999 1\n"
+        )
+        with (
+            patch("devserver.socket_inodes_for_pid", return_value={"99999"}),
+            self._patch_open_returning(established),
+        ):
+            assert devserver.listening_port_for_pid(1234) is None
+
+
+class TestSocketInodesForPid:
+    def test_extracts_socket_inodes(self):
+        with (
+            patch("devserver.os.listdir", return_value=["0", "1", "2", "3"]),
+            patch(
+                "devserver.os.readlink",
+                side_effect=[
+                    "/dev/null",
+                    "/dev/null",
+                    "/dev/null",
+                    "socket:[12345]",
+                ],
+            ),
+        ):
+            assert devserver.socket_inodes_for_pid(1234) == {"12345"}
+
+    def test_returns_empty_on_oserror(self):
+        with patch("devserver.os.listdir", side_effect=OSError()):
+            assert devserver.socket_inodes_for_pid(1234) == set()
+
+
+class TestFindReviewSuiteDevserverForCwd:
+    def test_returns_port_for_matching_pid(self, tmp_path):
+        with (
+            patch("devserver.pgrep_review_suite_devservers", return_value=[1234]),
+            patch("devserver.pid_cwd", return_value=tmp_path.resolve()),
+            patch("devserver.listening_port_for_pid", return_value=8765),
+        ):
+            assert devserver.find_review_suite_devserver_for_cwd(tmp_path.resolve()) == 8765
+
+    def test_filters_out_other_cwd_pid(self, tmp_path):
+        # First match is from a different project — must be skipped, not reused.
+        # listening_port_for_pid asserts it's only called for the matching pid.
+        other = tmp_path / "other"
+        other.mkdir()
+        cwds = iter([other.resolve(), tmp_path.resolve()])
+        port_calls = []
+
+        def fake_port(pid):
+            port_calls.append(pid)
+            return 8766
+
+        with (
+            patch("devserver.pgrep_review_suite_devservers", return_value=[1111, 2222]),
+            patch("devserver.pid_cwd", side_effect=lambda _: next(cwds)),
+            patch("devserver.listening_port_for_pid", side_effect=fake_port),
+        ):
+            assert devserver.find_review_suite_devserver_for_cwd(tmp_path.resolve()) == 8766
+        # Critical: only 2222 (matching cwd) should have had its port queried.
+        # If 1111 was queried we'd be at risk of reusing the wrong-cwd devserver.
+        assert port_calls == [2222]
+
+    def test_returns_none_when_no_match(self, tmp_path):
+        other = tmp_path / "other"
+        other.mkdir()
+        with (
+            patch("devserver.pgrep_review_suite_devservers", return_value=[1111]),
+            patch("devserver.pid_cwd", return_value=other.resolve()),
+        ):
+            assert devserver.find_review_suite_devserver_for_cwd(tmp_path.resolve()) is None
+
+    def test_returns_none_when_no_pgrep_matches(self, tmp_path):
+        with patch("devserver.pgrep_review_suite_devservers", return_value=[]):
+            assert devserver.find_review_suite_devserver_for_cwd(tmp_path.resolve()) is None
+
+
+class TestPortFileIO:
+    def test_write_then_read_roundtrip(self, tmp_path):
+        devserver.write_port_file(tmp_path, 8765)
+        assert devserver.read_port_file(tmp_path) == 8765
+
+    def test_read_returns_none_when_missing(self, tmp_path):
+        assert devserver.read_port_file(tmp_path) is None
+
+    def test_read_returns_none_on_garbage(self, tmp_path):
+        (tmp_path / ".plan-review").mkdir()
+        (tmp_path / ".plan-review" / ".devserver-port").write_text("not-a-number\n")
+        assert devserver.read_port_file(tmp_path) is None
+
+
+class TestEmitKv:
+    def test_emits_three_assignments(self, capsys):
+        # shlex.quote leaves URL-safe characters unquoted — that's fine because
+        # bash's unquoted RHS is also safe for `:`, `/`, `.`, etc. The quoting
+        # only matters for pathological values; see the next test.
+        devserver.emit_kv("http://192.168.1.50:8765/", 8765, "192.168.1.50")
+        lines = capsys.readouterr().out.strip().splitlines()
+        assert lines == [
+            "URL=http://192.168.1.50:8765/",
+            "PORT=8765",
+            "LAN_IP=192.168.1.50",
+        ]
+
+    def test_quotes_pathological_values(self, capsys):
+        # If REVIEW_SUITE_HOST gets set to something whitespace-y, the eval
+        # in SKILL.md must still produce a single assignment.
+        devserver.emit_kv("http://a b:1/", 1, "a b")
+        out = capsys.readouterr().out
+        assert "URL='http://a b:1/'" in out
+        assert "LAN_IP='a b'" in out
+
+
+class TestFindOrStart:
+    def test_reuses_via_port_file_when_listener_matches_cwd(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        devserver.write_port_file(tmp_path, 8765)
+        with (
+            patch("devserver.devserver_on_port_matches_cwd", return_value=True),
+            patch("devserver.resolve_lan_ip", return_value="10.0.0.1"),
+            patch(
+                "devserver.find_review_suite_devserver_for_cwd",
+                side_effect=AssertionError("should not be called"),
+            ),
+            patch(
+                "devserver.spawn_background_devserver",
+                side_effect=AssertionError("should not be called"),
+            ),
+        ):
+            assert devserver.find_or_start(None) == 0
+        assert "PORT=8765" in capsys.readouterr().out
+
+    def test_skips_port_file_when_listener_in_different_cwd(self, tmp_path, monkeypatch, capsys):
+        # Port file says 8765 is listening, but the listener belongs to
+        # another project — must NOT reuse. Falls through to pgrep step.
+        monkeypatch.chdir(tmp_path)
+        devserver.write_port_file(tmp_path, 8765)
+        with (
+            patch("devserver.devserver_on_port_matches_cwd", return_value=False),
+            patch("devserver.find_review_suite_devserver_for_cwd", return_value=8770),
+            patch("devserver.resolve_lan_ip", return_value="10.0.0.1"),
+            patch(
+                "devserver.spawn_background_devserver",
+                side_effect=AssertionError("should not be called"),
+            ),
+        ):
+            assert devserver.find_or_start(None) == 0
+        out = capsys.readouterr().out
+        assert "PORT=8770" in out
+        assert devserver.read_port_file(tmp_path) == 8770
+
+    def test_pgrep_fallback_when_no_port_file(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        with (
+            patch("devserver.devserver_on_port_matches_cwd", return_value=False),
+            patch("devserver.find_review_suite_devserver_for_cwd", return_value=8780),
+            patch("devserver.resolve_lan_ip", return_value="10.0.0.1"),
+            patch(
+                "devserver.spawn_background_devserver",
+                side_effect=AssertionError("should not be called"),
+            ),
+        ):
+            assert devserver.find_or_start(None) == 0
+        assert "PORT=8780" in capsys.readouterr().out
+
+    def test_explicit_port_arg_skips_pgrep_step(self, tmp_path, monkeypatch, capsys):
+        # When the user gives an explicit port, we must NOT silently reuse a
+        # different port discovered via pgrep.
+        monkeypatch.chdir(tmp_path)
+        popen_calls = []
+
+        def fake_spawn(port, root):
+            popen_calls.append((port, root))
+            return MagicMock()
+
+        with (
+            patch("devserver.devserver_on_port_matches_cwd", return_value=False),
+            patch(
+                "devserver.find_review_suite_devserver_for_cwd",
+                side_effect=AssertionError("pgrep step must be skipped"),
+            ),
+            patch("devserver.pick_free_port", return_value=9001),
+            patch("devserver.spawn_background_devserver", side_effect=fake_spawn),
+            patch("devserver.wait_for_listen", return_value=True),
+            patch("devserver.resolve_lan_ip", return_value="10.0.0.1"),
+        ):
+            assert devserver.find_or_start(9001) == 0
+        assert popen_calls == [(9001, tmp_path.resolve())]
+        assert "PORT=9001" in capsys.readouterr().out
+
+    def test_spawn_path_writes_port_file_and_emits(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        with (
+            patch("devserver.devserver_on_port_matches_cwd", return_value=False),
+            patch("devserver.find_review_suite_devserver_for_cwd", return_value=None),
+            patch("devserver.pick_free_port", return_value=8765),
+            patch("devserver.spawn_background_devserver", return_value=MagicMock()),
+            patch("devserver.wait_for_listen", return_value=True),
+            patch("devserver.resolve_lan_ip", return_value="10.0.0.1"),
+        ):
+            assert devserver.find_or_start(None) == 0
+        out = capsys.readouterr().out
+        assert "URL=http://10.0.0.1:8765/" in out
+        assert "PORT=8765" in out
+        assert devserver.read_port_file(tmp_path) == 8765
+
+    def test_spawn_failure_to_listen_returns_nonzero(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        with (
+            patch("devserver.devserver_on_port_matches_cwd", return_value=False),
+            patch("devserver.find_review_suite_devserver_for_cwd", return_value=None),
+            patch("devserver.pick_free_port", return_value=8765),
+            patch("devserver.spawn_background_devserver", return_value=MagicMock()),
+            patch("devserver.wait_for_listen", return_value=False),
+            patch("devserver.resolve_lan_ip", return_value="10.0.0.1"),
+        ):
+            assert devserver.find_or_start(None) == 1
+
+    def test_pick_free_port_collision_returns_nonzero(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        with (
+            patch("devserver.devserver_on_port_matches_cwd", return_value=False),
+            patch("devserver.find_review_suite_devserver_for_cwd", return_value=None),
+            patch(
+                "devserver.pick_free_port",
+                side_effect=RuntimeError("port 9000 is already in use"),
+            ),
+            patch("devserver.resolve_lan_ip", return_value="10.0.0.1"),
+        ):
+            assert devserver.find_or_start(9000) == 1
+
+
+class TestPickFreePort:
+    def test_returns_requested_when_free(self):
+        with patch("devserver.port_is_free", return_value=True):
+            assert devserver.pick_free_port(9001) == 9001
+
+    def test_raises_when_requested_is_busy(self):
+        with patch("devserver.port_is_free", return_value=False):
+            with pytest.raises(RuntimeError):
+                devserver.pick_free_port(9001)
+
+    def test_scans_range_when_no_request(self):
+        # First two ports busy, third one free.
+        free_results = iter([False, False, True] + [True] * 50)
+        with patch("devserver.port_is_free", side_effect=lambda _: next(free_results)):
+            assert devserver.pick_free_port(None) == 8767

@@ -1,7 +1,7 @@
 ---
 name: plan-review
 description: Create an interactive HTML review playground for an implementation plan. Generates a section-by-section reviewable document with approve/revise/question controls and a "Send to Claude" button that delivers feedback directly to a live Claude Code session. Usage - /plan-review [<ticket>]
-allowed-tools: Read Write Edit Bash(mkdir:*) Bash(cp:*) Bash(lsof:*) Bash(python3:*) Bash(ls:*) Bash(cat:*) Bash(echo:*) Bash(pgrep:*) Bash(awk:*)
+allowed-tools: Read Write Edit Bash(mkdir:*) Bash(cp:*) Bash(python3:*) Bash(ls:*) Bash(cat:*) Bash(echo:*) Bash(eval:*)
 argument-hint: "[<ticket>]"
 ---
 
@@ -25,7 +25,7 @@ A third form with both args explicit (`/plan-review <id> <title>`) is **not** su
 3. Populate the `docSections` array with plan content from the main agent.
 4. Set the page title, heading, and `PLAN_NAME` constant.
 5. Write the output HTML to the resolved output directory.
-6. Start the bundled devserver: `${CLAUDE_PLUGIN_ROOT}/bin/devserver.py` on port 8765.
+6. Start (or reuse) the bundled devserver via `${CLAUDE_PLUGIN_ROOT}/bin/devserver.py find-or-start` — project-scoped: one devserver per project root on a free port in 8765-8799.
 7. Return the LAN-IP URL.
 
 On **Resume** the flow short-circuits: hydrate the prior plan's `docSections` and `priorApprovals` into the agent's context, rewrite only the `CLAUDE_SESSION` constant in the existing HTML, then jump to step 6.
@@ -119,48 +119,11 @@ If the generator is unavailable (no `python3`, restricted environment, etc.), do
 
 8. **Write the file** to the resolved output directory.
 
-9. **Start (or reuse) the devserver.** Each project gets its own port, recorded in `<output-dir>/.devserver-port`. Re-invocations in the same project reuse the existing devserver; concurrent projects auto-allocate sequential free ports. Do NOT `cd` first — the devserver must be launched from the user's project root.
+9. **Start (or reuse) the devserver.** Project-scoped: the devserver self-discovers an existing instance whose `/proc/<pid>/cwd` matches the current project root, or spawns a new one in this project's cwd. Two projects on the same host get distinct devservers on distinct ports; same-project repeat invocations reuse the existing one.
 
    ```bash
-   OUT_DIR="${PLAN_REVIEW_DIR:-.plan-review}"
-   mkdir -p "$OUT_DIR"
-   PORT_FILE="$OUT_DIR/.devserver-port"
-
-   PORT=""
-
-   # 1. Fast path: reuse via the recorded port file.
-   if [ -f "$PORT_FILE" ]; then
-     SAVED=$(cat "$PORT_FILE")
-     lsof -i ":$SAVED" >/dev/null 2>&1 && PORT="$SAVED"
-   fi
-
-   # 2. Fallback: discover an existing review-suite devserver by process pattern.
-   #    Catches the orphan-from-prior-session case where the port file is missing
-   #    or stale (e.g., forked session, fresh checkout). Without this, a fresh
-   #    scan picks the first free port and spawns a duplicate, leaving the orphan
-   #    listening. Multi-agent-safe — never kills an existing devserver, only
-   #    reuses one when found.
-   if [ -z "$PORT" ]; then
-     EXISTING_PID=$(pgrep -f "review-suite.*devserver\.py" | head -1)
-     if [ -n "$EXISTING_PID" ]; then
-       EXISTING_PORT=$(lsof -P -n -p "$EXISTING_PID" 2>/dev/null \
-         | awk '/LISTEN/ {split($9, a, ":"); print a[length(a)]; exit}')
-       if [ -n "$EXISTING_PORT" ]; then
-         PORT="$EXISTING_PORT"
-         echo "$PORT" > "$PORT_FILE"
-       fi
-     fi
-   fi
-
-   # 3. Spawn fresh on the first free port.
-   if [ -z "$PORT" ]; then
-     PORT=8765
-     while lsof -i ":$PORT" >/dev/null 2>&1 && [ "$PORT" -lt 8800 ]; do
-       PORT=$((PORT + 1))
-     done
-     python3 "${CLAUDE_PLUGIN_ROOT}/bin/devserver.py" "$PORT" &
-     echo "$PORT" > "$PORT_FILE"
-   fi
+   eval "$(python3 "${CLAUDE_PLUGIN_ROOT}/bin/devserver.py" find-or-start)"
+   # $URL, $PORT, $LAN_IP are now set
    ```
 
 10. **Return the URL.** Format: `http://<lan-ip>:$PORT/<output-dir-relative-to-cwd>/<filename>.html` (e.g., `http://192.168.1.237:8765/.plan-review/TT-128-foo-review.html`).

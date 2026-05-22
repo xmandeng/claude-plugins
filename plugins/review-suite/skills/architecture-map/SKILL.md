@@ -1,7 +1,7 @@
 ---
 name: architecture-map
 description: Create an interactive architecture concept-map playground for any application, seeded from chat context. Generates a draggable node graph with layered filters, per-node insights, saved named layouts, per-node feedback pins, and a Send-to-Claude button that drives a live Claude Code session via an embedded terminal. Usage - /architecture-map [<ticket>]
-allowed-tools: Read Write Edit Bash(mkdir:*) Bash(cp:*) Bash(lsof:*) Bash(python3:*) Bash(ls:*) Bash(cat:*) Bash(echo:*) Bash(pgrep:*) Bash(awk:*)
+allowed-tools: Read Write Edit Bash(mkdir:*) Bash(cp:*) Bash(python3:*) Bash(ls:*) Bash(cat:*) Bash(echo:*) Bash(eval:*)
 argument-hint: "[<ticket>]"
 ---
 
@@ -33,7 +33,7 @@ A two-arg form is **not** supported — keep the signature minimal, same as `pla
 3. Populate the `nodes` and `edges` arrays with the system under discussion.
 4. Set the page title, heading, and JS constants (`PLAN_NAME`, `CLAUDE_SESSION`, `LAYOUTS_FILE`, `SCOPE_HEADER`).
 5. Write the output HTML to the resolved output directory.
-6. Start the bundled devserver: `${CLAUDE_PLUGIN_ROOT}/bin/devserver.py` on port 8785.
+6. Start (or reuse) the bundled devserver via `${CLAUDE_PLUGIN_ROOT}/bin/devserver.py find-or-start` — project-scoped: one devserver per project root on a free port in 8765-8799.
 7. Return the LAN-IP URL.
 
 On **Resume** the flow short-circuits: hydrate the prior node/edge arrays into the agent's context, rewrite only the `CLAUDE_SESSION` constant in the existing HTML, then jump to step 6.
@@ -155,46 +155,11 @@ If the generator is unavailable (no `python3`, restricted environment, etc.), do
 
 8. **Write the file** to the resolved output directory.
 
-9. **Start (or reuse) the devserver.** Each project gets its own port, recorded in `<output-dir>/.devserver-port`. Re-invocations in the same project reuse the existing devserver; concurrent projects auto-allocate sequential free ports. Launch the devserver **from the user's project root** (no `cd` first) so the PTY bridge's `claude --resume <sid>` finds the session transcript.
+9. **Start (or reuse) the devserver.** Project-scoped: the devserver self-discovers an existing instance whose `/proc/<pid>/cwd` matches the current project root, or spawns a new one in this project's cwd. Two projects on the same host get distinct devservers on distinct ports; same-project repeat invocations reuse the existing one.
 
    ```bash
-   OUT_DIR="${ARCHITECTURE_MAP_DIR:-.architecture-map}"
-   mkdir -p "$OUT_DIR"
-   PORT_FILE="$OUT_DIR/.devserver-port"
-
-   PORT=""
-
-   # 1. Fast path: reuse via the recorded port file.
-   if [ -f "$PORT_FILE" ]; then
-     SAVED=$(cat "$PORT_FILE")
-     lsof -i ":$SAVED" >/dev/null 2>&1 && PORT="$SAVED"
-   fi
-
-   # 2. Fallback: discover an existing review-suite devserver by process pattern.
-   #    Catches the orphan-from-prior-session case where the port file is missing
-   #    or stale (e.g., forked session, fresh checkout). Multi-agent-safe — never
-   #    kills an existing devserver, only reuses one when found.
-   if [ -z "$PORT" ]; then
-     EXISTING_PID=$(pgrep -f "review-suite.*devserver\.py" | head -1)
-     if [ -n "$EXISTING_PID" ]; then
-       EXISTING_PORT=$(lsof -P -n -p "$EXISTING_PID" 2>/dev/null \
-         | awk '/LISTEN/ {split($9, a, ":"); print a[length(a)]; exit}')
-       if [ -n "$EXISTING_PORT" ]; then
-         PORT="$EXISTING_PORT"
-         echo "$PORT" > "$PORT_FILE"
-       fi
-     fi
-   fi
-
-   # 3. Spawn fresh on the first free port.
-   if [ -z "$PORT" ]; then
-     PORT=8785
-     while lsof -i ":$PORT" >/dev/null 2>&1 && [ "$PORT" -lt 8810 ]; do
-       PORT=$((PORT + 1))
-     done
-     python3 "${CLAUDE_PLUGIN_ROOT}/bin/devserver.py" "$PORT" &
-     echo "$PORT" > "$PORT_FILE"
-   fi
+   eval "$(python3 "${CLAUDE_PLUGIN_ROOT}/bin/devserver.py" find-or-start)"
+   # $URL, $PORT, $LAN_IP are now set
    ```
 
 10. **Return the URL.** Format: `http://<lan-ip>:$PORT/<output-dir-relative-to-cwd>/<filename>.html` (e.g., `http://192.168.1.237:8785/.architecture-map/TT-134-ingestion-architecture-map.html`).

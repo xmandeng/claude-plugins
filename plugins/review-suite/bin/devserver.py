@@ -29,12 +29,15 @@ import json
 import os
 import pty
 import re
+import shlex
 import signal
 import socket
 import struct
+import subprocess
 import sys
 import termios
 import threading
+import time
 import uuid
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -689,7 +692,325 @@ class DevHandler(SimpleHTTPRequestHandler):
         super().log_message(format, *args)
 
 
+# =============================================================================
+# Project-scoped discovery (TT-150) — devserver instances are intrinsically
+# tied to their spawn cwd (static root, PUT containment base, PTY-bridge
+# `claude --resume` cwd). When the skill kickoff runs from project A, we must
+# only reuse devservers whose `/proc/<pid>/cwd` resolves to project A's root.
+# Sharing across projects would serve the wrong files and would attach the
+# PTY bridge to the wrong transcript.
+# =============================================================================
+
+PORT_SCAN_RANGE = range(8765, 8800)
+SPAWN_PORT_WAIT_TIMEOUT = 5.0
+SPAWN_PORT_WAIT_INTERVAL = 0.05
+
+
+def lsof_listening_pids(port: int) -> list[int]:
+    """Return PIDs holding a LISTEN socket on `port`, or [] if none / lsof missing."""
+    try:
+        out = subprocess.run(
+            ["lsof", "-t", "-i", f":{port}", "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return []
+    pids: list[int] = []
+    for line in out.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            pids.append(int(line))
+        except ValueError:
+            continue
+    return pids
+
+
+def pid_cwd(pid: int) -> Path | None:
+    """Return realpath of /proc/<pid>/cwd, or None if not introspectable."""
+    try:
+        return Path(os.readlink(f"/proc/{pid}/cwd")).resolve()
+    except OSError:
+        return None
+
+
+def devserver_on_port_matches_cwd(port: int, project_root: Path) -> bool:
+    """True iff any LISTEN-er on `port` has cwd resolving to `project_root`."""
+    for pid in lsof_listening_pids(port):
+        cwd = pid_cwd(pid)
+        if cwd is not None and cwd == project_root:
+            return True
+    return False
+
+
+def pgrep_review_suite_devservers() -> list[int]:
+    """Return PIDs whose command line matches `review-suite.*devserver\\.py`."""
+    try:
+        out = subprocess.run(
+            ["pgrep", "-f", r"review-suite.*devserver\.py"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return []
+    pids: list[int] = []
+    for line in out.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            pids.append(int(line))
+        except ValueError:
+            continue
+    return pids
+
+
+def socket_inodes_for_pid(pid: int) -> set[str]:
+    """Return the set of socket inodes referenced by `pid`'s open fds.
+
+    Each fd in `/proc/<pid>/fd/` whose readlink starts with `socket:[<inode>]`
+    contributes its inode. Returns empty set on any access error (pid gone,
+    permission denied, etc.).
+    """
+    inodes: set[str] = set()
+    try:
+        entries = os.listdir(f"/proc/{pid}/fd")
+    except OSError:
+        return inodes
+    for entry in entries:
+        try:
+            target = os.readlink(f"/proc/{pid}/fd/{entry}")
+        except OSError:
+            continue
+        if target.startswith("socket:[") and target.endswith("]"):
+            inodes.add(target[len("socket:[") : -1])
+    return inodes
+
+
+def listening_port_for_pid(pid: int) -> int | None:
+    """Return the first TCP LISTEN port held by `pid`, or None.
+
+    Pure-`/proc` implementation — avoids `lsof -p <pid>` which can take many
+    seconds on hosts with filesystem mounts that stall lsof's initial walk
+    (CIFS, FUSE, Docker overlays). Reads `/proc/<pid>/fd/*` for socket
+    inodes, then matches them against LISTEN rows in `/proc/net/tcp` and
+    `/proc/net/tcp6`. State `0A` is TCP_LISTEN.
+
+    Columns in /proc/net/tcp:
+        sl  local_address  rem  st  tx/rx  tr/tm  retrnsmt  uid  timeout  inode  ...
+        0   1              2    3   4      5      6         7    8        9
+    `local_address` is `<hex-addr>:<hex-port>`; we want the hex port.
+    """
+    inodes = socket_inodes_for_pid(pid)
+    if not inodes:
+        return None
+    for proc_path in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(proc_path) as fh:
+                next(fh, None)  # header
+                for line in fh:
+                    parts = line.split()
+                    if len(parts) < 10:
+                        continue
+                    if parts[3] != "0A":  # TCP_LISTEN
+                        continue
+                    if parts[9] not in inodes:
+                        continue
+                    local = parts[1]
+                    colon = local.rfind(":")
+                    if colon < 0:
+                        continue
+                    try:
+                        return int(local[colon + 1 :], 16)
+                    except ValueError:
+                        continue
+        except OSError:
+            continue
+    return None
+
+
+def find_review_suite_devserver_for_cwd(project_root: Path) -> int | None:
+    """Return a LISTEN port for a review-suite devserver whose cwd matches.
+
+    Filters pgrep matches by `/proc/<pid>/cwd == project_root`. Returns the
+    first matching pid's listening port, or None if no match.
+    """
+    for pid in pgrep_review_suite_devservers():
+        cwd = pid_cwd(pid)
+        if cwd is None or cwd != project_root:
+            continue
+        port = listening_port_for_pid(pid)
+        if port is not None:
+            return port
+    return None
+
+
+def port_is_free(port: int) -> bool:
+    """True iff `port` is not currently held by any LISTEN socket."""
+    return not lsof_listening_pids(port)
+
+
+def pick_free_port(requested: int | None) -> int:
+    """Resolve a port to bind. Honors `requested` if free, otherwise scans 8765-8799.
+
+    Raises RuntimeError on a requested-port collision or if the scan exhausts.
+    """
+    if requested is not None:
+        if not port_is_free(requested):
+            raise RuntimeError(f"port {requested} is already in use")
+        return requested
+    for candidate in PORT_SCAN_RANGE:
+        if port_is_free(candidate):
+            return candidate
+    raise RuntimeError(f"no free port in {PORT_SCAN_RANGE.start}-{PORT_SCAN_RANGE.stop - 1}")
+
+
+def wait_for_listen(port: int, timeout: float = SPAWN_PORT_WAIT_TIMEOUT) -> bool:
+    """Poll until `port` has a LISTEN-er, or `timeout` elapses. True on success."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if lsof_listening_pids(port):
+            return True
+        time.sleep(SPAWN_PORT_WAIT_INTERVAL)
+    return False
+
+
+def spawn_background_devserver(port: int, project_root: Path) -> subprocess.Popen[bytes]:
+    """Spawn `python3 devserver.py <port>` detached, with stdio captured to a log.
+
+    `project_root` is the cwd passed to the child — the devserver reads it
+    via os.getcwd() at startup and uses it as the static root, PUT containment
+    base, and PTY-bridge spawn cwd. start_new_session detaches the child so
+    it survives the find-or-start parent exit.
+    """
+    log_dir = project_root / ".plan-review"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / ".devserver.log"
+    # Open in append mode so successive spawns accumulate. The log file is
+    # not part of the public contract; it exists for human debugging.
+    log_fh = log_path.open("ab")
+    return subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), str(port)],
+        cwd=str(project_root),
+        stdin=subprocess.DEVNULL,
+        stdout=log_fh,
+        stderr=log_fh,
+        start_new_session=True,
+    )
+
+
+def write_port_file(project_root: Path, port: int) -> None:
+    """Persist the active port under `<project_root>/.plan-review/.devserver-port`."""
+    port_dir = project_root / ".plan-review"
+    port_dir.mkdir(parents=True, exist_ok=True)
+    (port_dir / ".devserver-port").write_text(f"{port}\n")
+
+
+def read_port_file(project_root: Path) -> int | None:
+    """Return the port recorded under `.plan-review/.devserver-port`, or None."""
+    port_file = project_root / ".plan-review" / ".devserver-port"
+    try:
+        raw = port_file.read_text().strip()
+    except OSError:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def emit_kv(url: str, port: int, lan_ip: str) -> None:
+    """Print the find-or-start key=value envelope expected by SKILL.md kickoffs.
+
+    Three single-quoted shell-safe assignments so SKILL.md can `eval` the
+    output. `shlex.quote` defends against pathological LAN-IP values (e.g. a
+    REVIEW_SUITE_HOST override containing whitespace) — the port is an int
+    so it's always safe, but quoting all three keeps the contract uniform.
+    """
+    print(f"URL={shlex.quote(url)}")
+    print(f"PORT={shlex.quote(str(port))}")
+    print(f"LAN_IP={shlex.quote(lan_ip)}")
+
+
+def find_or_start(port_arg: int | None) -> int:
+    """Subcommand entry: discover or spawn a project-scoped devserver, print URL=/PORT=/LAN_IP=.
+
+    Returns the process exit code (0 on success, non-zero on failure).
+
+    Order of operations:
+      1. `<project_root>/.plan-review/.devserver-port` → verify the listener's
+         cwd matches project_root. Reuse if it does.
+      2. If no port arg was given, scan `pgrep -f "review-suite.*devserver\\.py"`
+         matches and reuse the first whose cwd matches project_root.
+      3. Otherwise spawn a fresh devserver in project_root, write the port file,
+         and emit the URL once the port is listening.
+
+    An explicit `port_arg` skips the pgrep step (the user asked for that specific
+    port). It still consults the port file fast path because if a server is
+    already running on the requested port AND it belongs to this project, we
+    should reuse rather than fail.
+    """
+    project_root = Path.cwd().resolve()
+    lan_ip = resolve_lan_ip()
+
+    # Step 1: port-file fast path. Reuse only if the listener is ours.
+    saved = read_port_file(project_root)
+    if saved is not None and devserver_on_port_matches_cwd(saved, project_root):
+        if port_arg is None or port_arg == saved:
+            emit_kv(f"http://{lan_ip}:{saved}/", saved, lan_ip)
+            return 0
+
+    # Step 2: pgrep fallback, scoped to this project's cwd. Skipped if the
+    # user gave an explicit port arg — they want that port specifically, not
+    # whatever happens to be running.
+    if port_arg is None:
+        found = find_review_suite_devserver_for_cwd(project_root)
+        if found is not None:
+            write_port_file(project_root, found)
+            emit_kv(f"http://{lan_ip}:{found}/", found, lan_ip)
+            return 0
+
+    # Step 3: spawn fresh.
+    try:
+        port = pick_free_port(port_arg)
+    except RuntimeError as exc:
+        print(f"devserver find-or-start: {exc}", file=sys.stderr)
+        return 1
+    spawn_background_devserver(port, project_root)
+    if not wait_for_listen(port):
+        print(
+            f"devserver find-or-start: spawned child on port {port} did not "
+            "begin listening within timeout; check .plan-review/.devserver.log",
+            file=sys.stderr,
+        )
+        return 1
+    write_port_file(project_root, port)
+    emit_kv(f"http://{lan_ip}:{port}/", port, lan_ip)
+    return 0
+
+
 def main() -> None:
+    # Subcommand dispatch: `find-or-start [PORT]` runs the project-scoped
+    # discovery logic and exits. Everything else falls through to the legacy
+    # foreground server mode for backward compatibility (skills that haven't
+    # been updated yet, direct `python3 devserver.py 8765` invocations).
+    if len(sys.argv) > 1 and sys.argv[1] == "find-or-start":
+        port_arg: int | None = None
+        if len(sys.argv) > 2 and sys.argv[2]:
+            try:
+                port_arg = int(sys.argv[2])
+            except ValueError:
+                print(
+                    f"devserver find-or-start: invalid port arg {sys.argv[2]!r}",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+        sys.exit(find_or_start(port_arg))
+
     port = int(os.environ.get("REVIEW_SUITE_PORT") or (sys.argv[1] if len(sys.argv) > 1 else 8765))
 
     # Spawn cwd = current working directory at startup. The skill invokes the
