@@ -184,6 +184,23 @@ def write_active_session(html_path: Path, sid: str) -> None:
         raise
 
 
+def transcript_exists(sid: str, cwd: str) -> bool:
+    """True if ``claude --resume <sid>`` would find a transcript for this project.
+
+    Claude records per-project transcripts at
+    ``~/.claude/projects/<slug>/<sid>.jsonl``, where ``<slug>`` is the project
+    cwd with path separators and dots flattened to dashes. A forked session
+    that never received any input, or an archived / garbage id, has no such
+    file — resuming it dies with "No conversation found". The bridge checks
+    this first so it can fall back to a working session rather than hand the
+    user a dead terminal.
+    """
+    if not sid:
+        return False
+    slug = re.sub(r"[/.]", "-", cwd)
+    return (Path.home() / ".claude" / "projects" / slug / f"{sid}.jsonl").is_file()
+
+
 # =============================================================================
 # WebSocket framing (RFC 6455) — minimal text/binary support for the
 # /api/claude PTY bridge. Hand-rolled to avoid pulling websockets/asyncio into
@@ -425,16 +442,45 @@ def bridge_ws_to_claude_pty(
     #   - Two browser tabs attach to the same SID → claude's session lock
     #     surfaces; second tab sees the error rather than silently forking.
     #   Per QUE-226 design: visible failures > hidden recovery branches.
+    # Resilient session selection. The original QUE-226 path resumed the
+    # stored fork (or forked the authoring SID) and let `claude --resume` die
+    # if that SID had no transcript. In practice that left a dead terminal
+    # whenever a fork never persisted (e.g. a fork that received no input, or a
+    # playground authored by a session that isn't resumable). We instead try,
+    # in order, the first session whose transcript actually exists:
+    #   1. stored fork (ACTIVE_SESSION)      -> attach
+    #   2. authoring session (CLAUDE_SESSION) -> fork
+    #   3. neither resumable                  -> fresh session in this project
+    # Any fallback is ANNOUNCED in the terminal (see fallback_notice below), so
+    # the QUE-226 "failures stay visible" intent holds — we surface the swap
+    # rather than hide it, but the terminal stays usable instead of dying.
     stored_sid = read_active_session(playground_html) if playground_html else None
-    if stored_sid:
+    fallback_notice: str | None = None
+    if stored_sid and transcript_exists(stored_sid, cwd):
         args = ["claude", "--resume", stored_sid]
         active_sid = stored_sid
         spawn_mode = "attach"
-    else:
+    elif session_id and transcript_exists(session_id, cwd):
+        if stored_sid:
+            fallback_notice = (
+                f"stored session {stored_sid} has no transcript; "
+                "re-forking from the authoring session."
+            )
         new_sid = str(uuid.uuid4())
         args = ["claude", "--resume", session_id, "--fork-session", "--session-id", new_sid]
         active_sid = new_sid
         spawn_mode = "fork"
+    else:
+        missing = stored_sid or session_id or "(none)"
+        fallback_notice = (
+            f"session {missing} has no resumable transcript; starting a fresh "
+            "session in this project. Prior conversation context is not carried "
+            "over — the review doc path is re-sent on your next Send-to-Claude."
+        )
+        new_sid = str(uuid.uuid4())
+        args = ["claude", "--session-id", new_sid]
+        active_sid = new_sid
+        spawn_mode = "fresh"
 
     try:
         proc = _pty_spawn(args, cwd=cwd, env=env)
@@ -454,7 +500,7 @@ def bridge_ws_to_claude_pty(
     # constant. A persist failure isn't fatal (the spawn already succeeded),
     # but we surface it so the user knows future opens will fork-fresh
     # instead of being sticky.
-    if spawn_mode == "fork" and playground_html:
+    if spawn_mode in ("fork", "fresh") and playground_html:
         try:
             write_active_session(playground_html, active_sid)
         except (OSError, RuntimeError) as exc:
@@ -490,6 +536,17 @@ def bridge_ws_to_claude_pty(
         )
     except OSError:
         pass
+
+    # Surface any session fallback directly in the terminal so the swap is
+    # visible (QUE-226 intent) rather than a silent substitution. Sent as a
+    # binary frame so xterm.js renders it inline alongside claude's output.
+    if fallback_notice:
+        try:
+            ws_send_frame(
+                sock, OP_BINARY, ("\r\n[devserver] " + fallback_notice + "\r\n").encode()
+            )
+        except OSError:
+            pass
 
     pty_fd = proc.fd
     stop = threading.Event()
