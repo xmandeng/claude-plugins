@@ -453,16 +453,25 @@ def bridge_ws_to_claude_pty(
     # resets by blanking ACTIVE_SESSION — we never silently spawn a fresh
     # session and lose the thread.
     stored_sid = read_active_session(playground_html) if playground_html else None
-    if stored_sid:
+    # Attach to the stored fork only if its transcript actually exists on disk.
+    # Interactive `--fork-session` writes the forked transcript lazily -- on the
+    # first committed turn -- so a page that reconnects before any turn leaves the
+    # id baked into ACTIVE_SESSION with no file behind it. Attaching to such a
+    # stillborn id dead-ends every future open with "No conversation found", and
+    # blanking it only re-forks another stillborn id. A missing transcript holds
+    # no conversation, so re-forking loses nothing: we self-heal the playground
+    # instead of stranding it on a dead session.
+    if stored_sid and transcript_exists(stored_sid, cwd):
         args = ["claude", "--resume", stored_sid]
         active_sid = stored_sid
         spawn_mode = "attach"
     else:
-        # First open only. Fork once from the authoring session. Refuse to fork
-        # from a non-resumable parent: that produces a stillborn fork and
-        # poisons ACTIVE_SESSION with a dead id (every later open then attaches
-        # a session that never existed). Surface it so the user regenerates the
-        # playground from a live, resumable session instead.
+        # First open, or recovery from a stillborn stored fork. Fork from the
+        # authoring session. Refuse to fork from a non-resumable parent: that
+        # produces a stillborn fork and poisons ACTIVE_SESSION with a dead id
+        # (every later open then attaches a session that never existed). Surface
+        # it so the user regenerates the playground from a live, resumable
+        # session instead.
         if not transcript_exists(session_id, cwd):
             try:
                 ws_send_frame(
@@ -501,32 +510,10 @@ def bridge_ws_to_claude_pty(
             pass
         return
 
-    # Persist the new fork's SID by writing it into the HTML's ACTIVE_SESSION
-    # constant. A persist failure isn't fatal (the spawn already succeeded),
-    # but we surface it so the user knows future opens will fork-fresh
-    # instead of being sticky.
-    if spawn_mode == "fork" and playground_html:
-        try:
-            write_active_session(playground_html, active_sid)
-        except (OSError, RuntimeError) as exc:
-            try:
-                ws_send_frame(
-                    sock,
-                    OP_TEXT,
-                    json.dumps(
-                        {
-                            "type": "session_persist_failed",
-                            "msg": (
-                                f"spawned fork {active_sid} but couldn't update "
-                                f"ACTIVE_SESSION in {playground_html.name}: {exc}. "
-                                "future opens will spawn fresh forks instead of "
-                                "re-attaching."
-                            ),
-                        }
-                    ).encode(),
-                )
-            except OSError:
-                pass
+    # ACTIVE_SESSION is persisted lazily, by the watcher thread started below,
+    # once the fork's transcript actually lands on disk. Writing it here -- at
+    # spawn, before any turn has committed -- is what poisoned the HTML with
+    # stillborn ids in the first place.
 
     # Always announce the active session so the playground UI can display the
     # right SID in the handoff bar — same message shape whether we attached or
@@ -544,6 +531,45 @@ def bridge_ws_to_claude_pty(
 
     pty_fd = proc.fd
     stop = threading.Event()
+
+    # Persist ACTIVE_SESSION only once the fork's transcript exists on disk.
+    # Interactive `--fork-session` writes the transcript lazily (on the first
+    # committed turn), so the watcher waits for the file to appear, writes the id
+    # into the HTML, then exits. If the session ends before any turn commits, the
+    # watcher exits via `stop` without writing -- ACTIVE_SESSION stays blank and
+    # the next open re-forks cleanly rather than attaching a stillborn id.
+    def persist_active_session_when_ready() -> None:
+        if playground_html is None:
+            return
+        while not stop.wait(0.5):
+            if not transcript_exists(active_sid, cwd):
+                continue
+            try:
+                write_active_session(playground_html, active_sid)
+            except (OSError, RuntimeError) as exc:
+                try:
+                    ws_send_frame(
+                        sock,
+                        OP_TEXT,
+                        json.dumps(
+                            {
+                                "type": "session_persist_failed",
+                                "msg": (
+                                    f"forked {active_sid} but couldn't update "
+                                    f"ACTIVE_SESSION in {playground_html.name}: {exc}. "
+                                    "future opens will fork fresh instead of re-attaching."
+                                ),
+                            }
+                        ).encode(),
+                    )
+                except OSError:
+                    pass
+            return
+
+    if spawn_mode == "fork" and playground_html:
+        threading.Thread(
+            target=persist_active_session_when_ready, daemon=True
+        ).start()
 
     def pty_to_ws() -> None:
         try:
