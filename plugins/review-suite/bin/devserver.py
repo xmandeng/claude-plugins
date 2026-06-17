@@ -362,41 +362,259 @@ def _pty_spawn(argv, cwd, env, dimensions=(40, 120)):
         return _StdlibPty(argv, cwd=cwd, env=env, dimensions=dimensions)
 
 
+# =============================================================================
+# Persistent PTY sessions
+# =============================================================================
+# Keep one live `claude` child per playground, across WebSocket reconnects, so a
+# browser reload reattaches to the SAME conversation instead of killing it and
+# starting over. Forked sessions never flush a resumable transcript to disk, so
+# reattach is by live process (held here), not by `claude --resume`.
+
+_SESSION_BUFFER_MAX = 256 * 1024      # replay buffer kept per session (bytes)
+_SESSION_IDLE_REAP_SECONDS = 3600     # reap a client-less session after this long
+
+_sessions: dict[str, "PtySession"] = {}
+_sessions_lock = threading.Lock()
+_reaper_started = False
+
+
+class PtySession:
+    """A live `claude` PTY retained across WebSocket reconnections.
+
+    A single reader thread drains the PTY for the life of the child, mirroring
+    output into a bounded replay buffer and to whichever WebSocket is currently
+    attached. Reload swaps the attached socket without disturbing the child; the
+    replay buffer repaints the new connection so the conversation looks
+    continuous. When the child exits, the reader drops the session from the
+    registry and reaps the process.
+    """
+
+    def __init__(self, key: str, proc: object, active_sid: str, spawn_mode: str) -> None:
+        self.key = key
+        self.proc = proc
+        self.fd = proc.fd  # type: ignore[attr-defined]
+        self.active_sid = active_sid
+        self.spawn_mode = spawn_mode
+        self._buf = bytearray()
+        self._lock = threading.Lock()
+        self._ws: socket.socket | None = None
+        self.last_detach = time.monotonic()
+        self._reader = threading.Thread(
+            target=self._drain_pty, name=f"pty-reader[{active_sid[:8]}]", daemon=True
+        )
+        self._reader.start()
+
+    def _drain_pty(self) -> None:
+        while True:
+            try:
+                data = os.read(self.fd, 4096)
+            except OSError:
+                break
+            if not data:
+                break
+            with self._lock:
+                self._buf.extend(data)
+                excess = len(self._buf) - _SESSION_BUFFER_MAX
+                if excess > 0:
+                    del self._buf[:excess]
+                ws = self._ws
+            if ws is not None:
+                try:
+                    ws_send_frame(ws, OP_BINARY, data)
+                except OSError:
+                    pass
+        # Child exited: drop the session and reap so the next open cold-starts.
+        with _sessions_lock:
+            if _sessions.get(self.key) is self:
+                del _sessions[self.key]
+        self.terminate()
+
+    def attach(self, sock: socket.socket) -> None:
+        """Bind a WebSocket, evict any prior one, and replay recent output.
+
+        The replay is flushed while holding the lock and before ``_ws`` is
+        repointed, so live output can never interleave ahead of the buffered
+        scrollback on the freshly connected page.
+        """
+        with self._lock:
+            old = self._ws
+            replay = bytes(self._buf)
+            if replay:
+                try:
+                    ws_send_frame(sock, OP_BINARY, replay)
+                except OSError:
+                    pass
+            self._ws = sock
+        if old is not None and old is not sock:
+            try:
+                old.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+    def detach(self, sock: socket.socket) -> None:
+        with self._lock:
+            if self._ws is sock:
+                self._ws = None
+                self.last_detach = time.monotonic()
+
+    def write(self, data: bytes) -> None:
+        try:
+            os.write(self.fd, data)
+        except OSError:
+            pass
+
+    def setwinsize(self, rows: int, cols: int) -> None:
+        try:
+            self.proc.setwinsize(rows, cols)  # type: ignore[attr-defined]
+        except (OSError, ValueError):
+            pass
+
+    def alive(self) -> bool:
+        try:
+            return bool(self.proc.isalive())  # type: ignore[attr-defined]
+        except Exception:
+            return False
+
+    def is_idle(self, now: float, ttl: float) -> bool:
+        with self._lock:
+            return self._ws is None and now - self.last_detach > ttl
+
+    def terminate(self) -> None:
+        try:
+            if self.proc.isalive():  # type: ignore[attr-defined]
+                self.proc.terminate(force=True)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+
+def _reap_idle_sessions() -> None:
+    """Terminate sessions with no attached client past the idle TTL."""
+    while True:
+        time.sleep(60)
+        now = time.monotonic()
+        with _sessions_lock:
+            stale = [
+                (k, s)
+                for k, s in list(_sessions.items())
+                if s.is_idle(now, _SESSION_IDLE_REAP_SECONDS)
+            ]
+            for k, _ in stale:
+                _sessions.pop(k, None)
+        for _, s in stale:
+            s.terminate()
+
+
+def _ensure_reaper_running() -> None:
+    global _reaper_started
+    if _reaper_started:
+        return
+    _reaper_started = True
+    threading.Thread(target=_reap_idle_sessions, name="pty-reaper", daemon=True).start()
+
+
+def _cold_start_spawn(
+    sock: socket.socket,
+    cwd: str,
+    session_id: str,
+    playground_html: Path | None,
+) -> tuple[list[str], str, str] | None:
+    """Decide the argv for a brand-new playground process.
+
+    Returns ``(args, active_sid, spawn_mode)``, or ``None`` after sending an
+    error frame when the authoring session has no resumable transcript. A
+    stored ACTIVE_SESSION is resumed only if its transcript still exists;
+    otherwise we fork once from the authoring session to inherit the plan
+    context. The fork's transcript need never persist -- reloads reattach to
+    the live process rather than `claude --resume` it.
+    """
+    stored_sid = read_active_session(playground_html) if playground_html else None
+    if stored_sid and transcript_exists(stored_sid, cwd):
+        return (["claude", "--resume", stored_sid], stored_sid, "attach")
+    if not transcript_exists(session_id, cwd):
+        try:
+            ws_send_frame(
+                sock,
+                OP_TEXT,
+                json.dumps(
+                    {
+                        "error": (
+                            f"cannot start playground: authoring session {session_id} "
+                            "has no resumable transcript. Regenerate the review from a "
+                            "live session so a valid session id is baked in."
+                        )
+                    }
+                ).encode(),
+            )
+            ws_send_frame(sock, OP_CLOSE, b"")
+        except OSError:
+            pass
+        return None
+    new_sid = str(uuid.uuid4())
+    return (
+        ["claude", "--resume", session_id, "--fork-session", "--session-id", new_sid],
+        new_sid,
+        "fork",
+    )
+
+
+def _run_ws_input(sock: socket.socket, sess: "PtySession") -> None:
+    """Pump client->PTY input for one WebSocket; returns when the WS closes.
+
+    The PTY->client direction is handled by the session's own reader thread, so
+    this loop only forwards keystrokes, resize, and ping. It does not own the
+    process lifecycle -- returning here just detaches this connection.
+    """
+    while True:
+        frame = ws_read_frame(sock)
+        if frame is None:
+            break
+        opcode, payload = frame
+        if opcode == OP_CLOSE:
+            break
+        if opcode == OP_PING:
+            try:
+                ws_send_frame(sock, OP_PONG, payload)
+            except OSError:
+                break
+            continue
+        if opcode == OP_TEXT:
+            try:
+                msg = json.loads(payload.decode("utf-8", errors="replace"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if isinstance(msg, dict) and msg.get("type") == "resize":
+                try:
+                    sess.setwinsize(int(msg["rows"]), int(msg["cols"]))
+                except (KeyError, ValueError):
+                    pass
+            continue
+        if opcode == OP_BINARY:
+            sess.write(payload)
+
+
 def bridge_ws_to_claude_pty(
     sock: socket.socket,
     cwd: str,
     session_id: str,
     playground_html: Path | None = None,
 ) -> None:
-    """Spawn the playground's PTY-bridged `claude` session and proxy I/O over the WS.
+    """Bridge a browser WebSocket to the playground's live `claude` PTY.
 
-    Sticky-session behavior (QUE-226):
-      - If ``playground_html`` is set and its ACTIVE_SESSION constant holds a
-        valid UUID, attach to that SID (``claude --resume <stored>``). One
-        fork per playground lifetime.
-      - Otherwise, fork from ``session_id`` (the authoring SID baked into the
-        HTML's CLAUDE_SESSION), capture the new SID, and write it into the
-        HTML's ACTIVE_SESSION constant so the next open re-attaches instead
-        of re-forking. The HTML itself is the persistence layer — no sibling
-        state file.
-      - If ``playground_html`` is None (caller passed no playground identifier,
-        the path was rejected as unsafe, or the HTML predates QUE-226 and
-        doesn't carry ACTIVE_SESSION), fall back to the pre-QUE-226
-        always-fork behavior. Preserves backward compatibility with older
-        rendered HTMLs.
+    Persistent-session behavior: one `claude` child is kept alive per
+    playground (keyed by its HTML path) for the life of the devserver, in
+    ``_sessions``. A browser reload drops the WebSocket but NOT the child --
+    the next connection re-binds to the same process and replays the recent
+    output buffer, so the conversation survives reloads unbroken. The child is
+    forked from the authoring session only on the FIRST open (to inherit the
+    plan context); reloads never re-fork or `--resume`, so they don't depend on
+    the forked transcript ever landing on disk.
 
     Wire protocol:
       - BINARY frames in both directions carry raw PTY bytes (terminal I/O).
       - TEXT frames carry JSON control messages from the client. Currently
         only ``{"type":"resize","rows":N,"cols":N}`` is recognised.
-      - Server sends one TEXT frame at startup with the active session info:
+      - Server sends one TEXT frame on connect with the active session info:
         ``{"type":"active_session","sid":"<sid>","mode":"attach"|"fork"}``.
-        Replaces the pre-QUE-226 ``forked_session`` message; clients should
-        accept both for the upgrade window.
-
-    Backend selection: if `ptyprocess` is installed, uses it (battle-tested
-    third-party PTY wrapper). Otherwise falls back to a stdlib-only
-    implementation. Either way works — `pip install ptyprocess` is optional.
 
     Unix-only (Windows would need `pywinpty`; out of scope).
     """
@@ -414,237 +632,71 @@ def bridge_ws_to_claude_pty(
             pass
         return
 
-    env = os.environ.copy()
-    env.setdefault("TERM", "xterm-256color")
+    key = str(playground_html) if playground_html is not None else f"session:{session_id}"
 
-    # `cwd` is the spawn cwd computed at devserver startup (project root).
-    # If `claude --resume <sid>` fails because the session id doesn't match a
-    # resumable transcript, that's a real configuration error — we surface it
-    # rather than masking by silently falling back to a fresh session.
-    #
-    # Spawn strategy (QUE-226):
-    #
-    # 1. If the HTML's ACTIVE_SESSION constant holds a valid UUID, attach to
-    #    that SID. No --fork-session: this is the "second open and beyond"
-    #    path. The user clicks Send-to-Claude or refreshes the page; they
-    #    land on the same session every time. This is the whole point of
-    #    the sticky model.
-    #
-    # 2. Otherwise (first open, or backward-compat path with no
-    #    playground_html), fork from the authoring SID. Write the new SID
-    #    back into the HTML's ACTIVE_SESSION constant so step 1 fires from
-    #    now on.
-    #
-    # Failure modes intentionally NOT recovered silently:
-    #   - Stored SID points to a dead session → the claude CLI's error message
-    #     surfaces in the terminal; the user blanks out ACTIVE_SESSION in the
-    #     HTML to reset.
-    #   - Two browser tabs attach to the same SID → claude's session lock
-    #     surfaces; second tab sees the error rather than silently forking.
-    #   Per QUE-226 design: visible failures > hidden recovery branches.
-    # Attach-once-and-stick. A playground forks the authoring session EXACTLY
-    # once, on the first open, and records the fork id in ACTIVE_SESSION. Every
-    # later open ATTACHES that same fork, unconditionally. We never re-fork on
-    # reconnect: re-forking mints a brand-new session id and branches off the
-    # authoring session's stale state, which restarts the conversation and
-    # drops everything said in the prior fork (the "lost everything / had this
-    # conversation three times" failure). If the stored fork is genuinely gone,
-    # claude's "No conversation found" surfaces in the terminal and the user
-    # resets by blanking ACTIVE_SESSION — we never silently spawn a fresh
-    # session and lose the thread.
-    stored_sid = read_active_session(playground_html) if playground_html else None
-    # Attach to the stored fork only if its transcript actually exists on disk.
-    # Interactive `--fork-session` writes the forked transcript lazily -- on the
-    # first committed turn -- so a page that reconnects before any turn leaves the
-    # id baked into ACTIVE_SESSION with no file behind it. Attaching to such a
-    # stillborn id dead-ends every future open with "No conversation found", and
-    # blanking it only re-forks another stillborn id. A missing transcript holds
-    # no conversation, so re-forking loses nothing: we self-heal the playground
-    # instead of stranding it on a dead session.
-    if stored_sid and transcript_exists(stored_sid, cwd):
-        args = ["claude", "--resume", stored_sid]
-        active_sid = stored_sid
-        spawn_mode = "attach"
-    else:
-        # First open, or recovery from a stillborn stored fork. Fork from the
-        # authoring session. Refuse to fork from a non-resumable parent: that
-        # produces a stillborn fork and poisons ACTIVE_SESSION with a dead id
-        # (every later open then attaches a session that never existed). Surface
-        # it so the user regenerates the playground from a live, resumable
-        # session instead.
-        if not transcript_exists(session_id, cwd):
+    with _sessions_lock:
+        sess = _sessions.get(key)
+        if sess is not None and not sess.alive():
+            _sessions.pop(key, None)
+            sess = None
+        reused = sess is not None
+        if sess is None:
+            # Cold start: no live process for this playground yet. Decide how to
+            # spawn one, then keep it alive across reconnects.
+            spawn = _cold_start_spawn(sock, cwd, session_id, playground_html)
+            if spawn is None:
+                return  # error frame already sent
+            args, active_sid, spawn_mode = spawn
+            env = os.environ.copy()
+            env.setdefault("TERM", "xterm-256color")
             try:
-                ws_send_frame(
-                    sock,
-                    OP_TEXT,
-                    json.dumps(
-                        {
-                            "error": (
-                                f"cannot start playground: authoring session {session_id} "
-                                "has no resumable transcript. Regenerate the review from a "
-                                "live session so a valid session id is baked in."
-                            )
-                        }
-                    ).encode(),
-                )
-                ws_send_frame(sock, OP_CLOSE, b"")
-            except OSError:
-                pass
-            return
-        new_sid = str(uuid.uuid4())
-        args = ["claude", "--resume", session_id, "--fork-session", "--session-id", new_sid]
-        active_sid = new_sid
-        spawn_mode = "fork"
+                proc = _pty_spawn(args, cwd=cwd, env=env)
+            except Exception as exc:
+                try:
+                    ws_send_frame(
+                        sock,
+                        OP_TEXT,
+                        json.dumps({"error": f"failed to spawn claude: {exc}"}).encode(),
+                    )
+                    ws_send_frame(sock, OP_CLOSE, b"")
+                except OSError:
+                    pass
+                return
+            sess = PtySession(key, proc, active_sid, spawn_mode)
+            _sessions[key] = sess
+            _ensure_reaper_running()
 
-    try:
-        proc = _pty_spawn(args, cwd=cwd, env=env)
-    except Exception as exc:
-        try:
-            ws_send_frame(
-                sock,
-                OP_TEXT,
-                json.dumps({"error": f"failed to spawn claude: {exc}"}).encode(),
-            )
-            ws_send_frame(sock, OP_CLOSE, b"")
-        except OSError:
-            pass
-        return
-
-    # ACTIVE_SESSION is persisted lazily, by the watcher thread started below,
-    # once the fork's transcript actually lands on disk. Writing it here -- at
-    # spawn, before any turn has committed -- is what poisoned the HTML with
-    # stillborn ids in the first place.
-
-    # Always announce the active session so the playground UI can display the
-    # right SID in the handoff bar — same message shape whether we attached or
-    # forked, plus a `mode` discriminator the UI can use to badge fork sessions.
+    # Announce the active session so the UI can show the right SID. A reused
+    # session is reported as "attach" -- the client treats it as a reconnect.
     try:
         ws_send_frame(
             sock,
             OP_TEXT,
             json.dumps(
-                {"type": "active_session", "sid": active_sid, "mode": spawn_mode}
+                {
+                    "type": "active_session",
+                    "sid": sess.active_sid,
+                    "mode": "attach" if reused else sess.spawn_mode,
+                }
             ).encode(),
         )
     except OSError:
         pass
 
-    pty_fd = proc.fd
-    stop = threading.Event()
-
-    # Persist ACTIVE_SESSION only once the fork's transcript exists on disk.
-    # Interactive `--fork-session` writes the transcript lazily (on the first
-    # committed turn), so the watcher waits for the file to appear, writes the id
-    # into the HTML, then exits. If the session ends before any turn commits, the
-    # watcher exits via `stop` without writing -- ACTIVE_SESSION stays blank and
-    # the next open re-forks cleanly rather than attaching a stillborn id.
-    def persist_active_session_when_ready() -> None:
-        if playground_html is None:
-            return
-        while not stop.wait(0.5):
-            if not transcript_exists(active_sid, cwd):
-                continue
-            try:
-                write_active_session(playground_html, active_sid)
-            except (OSError, RuntimeError) as exc:
-                try:
-                    ws_send_frame(
-                        sock,
-                        OP_TEXT,
-                        json.dumps(
-                            {
-                                "type": "session_persist_failed",
-                                "msg": (
-                                    f"forked {active_sid} but couldn't update "
-                                    f"ACTIVE_SESSION in {playground_html.name}: {exc}. "
-                                    "future opens will fork fresh instead of re-attaching."
-                                ),
-                            }
-                        ).encode(),
-                    )
-                except OSError:
-                    pass
-            return
-
-    if spawn_mode == "fork" and playground_html:
-        threading.Thread(
-            target=persist_active_session_when_ready, daemon=True
-        ).start()
-
-    def pty_to_ws() -> None:
-        try:
-            while not stop.is_set():
-                try:
-                    data = os.read(pty_fd, 4096)
-                except OSError:
-                    break
-                if not data:
-                    break
-                try:
-                    ws_send_frame(sock, OP_BINARY, data)
-                except OSError:
-                    break
-        finally:
-            stop.set()
-
-    def ws_to_pty() -> None:
-        try:
-            while not stop.is_set():
-                frame = ws_read_frame(sock)
-                if frame is None:
-                    break
-                opcode, payload = frame
-                if opcode == OP_CLOSE:
-                    break
-                if opcode == OP_PING:
-                    try:
-                        ws_send_frame(sock, OP_PONG, payload)
-                    except OSError:
-                        break
-                    continue
-                if opcode == OP_TEXT:
-                    try:
-                        msg = json.loads(payload.decode("utf-8", errors="replace"))
-                    except (json.JSONDecodeError, UnicodeDecodeError):
-                        continue
-                    if isinstance(msg, dict) and msg.get("type") == "resize":
-                        try:
-                            rows = int(msg["rows"])
-                            cols = int(msg["cols"])
-                            proc.setwinsize(rows, cols)
-                        except (KeyError, ValueError, OSError):
-                            pass
-                    continue
-                if opcode == OP_BINARY:
-                    try:
-                        os.write(pty_fd, payload)
-                    except OSError:
-                        break
-        finally:
-            stop.set()
-
-    t1 = threading.Thread(target=pty_to_ws, name="claude-pty->ws", daemon=True)
-    t2 = threading.Thread(target=ws_to_pty, name="claude-ws->pty", daemon=True)
-    t1.start()
-    t2.start()
+    # Bind this WebSocket to the live process (evicting any prior one) and
+    # replay recent output so a reloaded page repaints the conversation.
+    sess.attach(sock)
     try:
-        stop.wait()
+        _run_ws_input(sock, sess)
     finally:
-        try:
-            if proc.isalive():
-                proc.terminate(force=True)
-        except Exception:
-            pass
-        try:
-            ws_send_frame(sock, OP_CLOSE, b"")
-        except OSError:
-            pass
+        # A dropped WebSocket (reload, tab close) detaches but DOES NOT kill the
+        # child -- that is the whole point. The process lingers for the next
+        # connection; the idle reaper collects it if no one returns.
+        sess.detach(sock)
         try:
             sock.shutdown(socket.SHUT_RDWR)
         except OSError:
             pass
-        t1.join(timeout=2)
-        t2.join(timeout=2)
 
 
 class DevHandler(SimpleHTTPRequestHandler):
