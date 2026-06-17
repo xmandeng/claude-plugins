@@ -5,21 +5,47 @@ set -euo pipefail
 # embedded terminal (CLAUDE_SESSION). It MUST be a resumable id — one whose
 # transcript exists on disk — so the devserver can `claude --resume` / fork it.
 #
-# The hook payload's `.session_id` is NOT reliable for this: over a long,
-# compacted, or background-job conversation the harness advances the live
-# session id while the transcript keeps persisting under the ORIGINAL id. The
-# advancing id has no transcript of its own, so baking it produces a stillborn
-# fork and a dead playground terminal. `.transcript_path` always points at the
-# file the conversation actually persists to, so its basename is the correct,
-# resumable id. Fall back to `.session_id` only when transcript_path is absent.
+# Neither field in the hook payload is guaranteed to name a resumable id. Over a
+# long, compacted, or background-job conversation the harness advances the live
+# session id (and, observed in practice, the reported `.transcript_path`) while
+# the transcript keeps persisting under the ORIGINAL id. Baking an id whose
+# .jsonl does not exist produces a stillborn fork and a dead playground
+# terminal, and `claude --resume <id>` fails with "No conversation found".
+#
+# So we treat the payload as a hint and verify against disk:
+#   1. Prefer `.transcript_path`'s basename, else `.session_id`.
+#   2. If that id has no .jsonl in the project's transcript directory, fall back
+#      to the most-recently-modified transcript there — the file the
+#      conversation is actually persisting to. (At UserPromptSubmit time the
+#      current turn is not flushed yet, so the newest existing file is the real
+#      prior-turn transcript, not a phantom for this turn.)
 input=$(cat)
 transcript_path=$(jq -r '.transcript_path // empty' <<<"$input")
 session_id=$(jq -r '.session_id // empty' <<<"$input")
 
+proj_dir=""
 if [ -n "$transcript_path" ]; then
+  proj_dir=$(dirname "$transcript_path")
   sid=$(basename "$transcript_path" .jsonl)
 else
   sid="$session_id"
+fi
+
+# Disk-verify the candidate; fall back to the newest existing transcript if the
+# harness handed us an id whose file was never written. The scan is pipe-free
+# on purpose: `ls | head` takes SIGPIPE when head closes early, which under
+# `set -o pipefail` + `set -e` would abort the hook before it prints anything.
+if [ -n "$proj_dir" ] && [ ! -f "$proj_dir/$sid.jsonl" ]; then
+  newest=""
+  for f in "$proj_dir"/*.jsonl; do
+    [ -e "$f" ] || continue          # no-match: glob stayed literal
+    if [ -z "$newest" ] || [ "$f" -nt "$newest" ]; then
+      newest="$f"
+    fi
+  done
+  if [ -n "$newest" ]; then
+    sid=$(basename "$newest" .jsonl)
+  fi
 fi
 
 printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"review-suite-session-id: %s"}}\n' "$sid"

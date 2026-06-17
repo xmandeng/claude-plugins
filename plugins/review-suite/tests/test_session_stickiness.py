@@ -312,3 +312,74 @@ def test_resolve_write_read_lifecycle(
 
     # Step 3: subsequent-open state — stored SID emerges
     assert devserver.read_active_session(target) == sid
+
+
+# ---------------------------------------------------------------------------
+# _cold_start_spawn — the fork branch must persist ACTIVE_SESSION for real
+# ---------------------------------------------------------------------------
+
+
+class TestColdStartSpawnPersistsForkSid:
+    """The browser<->terminal round trip depends on _cold_start_spawn writing
+    the fork SID into the HTML, not just reporting it over the wire. Before
+    this was wired, ACTIVE_SESSION stayed empty and every cold start re-forked
+    from the authoring session, abandoning whatever the terminal advanced."""
+
+    def _socketpair(self):
+        import socket
+
+        client, server = socket.socketpair()
+        return client, server
+
+    def test_fork_writes_new_sid_into_html(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Authoring session resumable; no stored fork yet (empty ACTIVE_SESSION).
+        monkeypatch.setattr(devserver, "transcript_exists", lambda _sid, _cwd: True)
+        html = _write_playground(tmp_path, "QUE-9-rt-review.html", active="")
+        client, server = self._socketpair()
+        try:
+            spawn = devserver._cold_start_spawn(server, str(tmp_path), "authoring", html)
+        finally:
+            client.close()
+            server.close()
+        assert spawn is not None
+        args, active_sid, mode = spawn
+        assert mode == "fork"
+        # The returned fork SID is exactly what got persisted to the HTML.
+        assert devserver.read_active_session(html) == active_sid
+        assert args[:3] == ["claude", "--resume", "authoring"]
+
+    def test_attach_does_not_rewrite_html(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(devserver, "transcript_exists", lambda _sid, _cwd: True)
+        stored = str(uuid.uuid4())
+        html = _write_playground(tmp_path, "QUE-10-rt-review.html", active=stored)
+        before = html.read_text()
+        client, server = self._socketpair()
+        try:
+            spawn = devserver._cold_start_spawn(server, str(tmp_path), "authoring", html)
+        finally:
+            client.close()
+            server.close()
+        assert spawn == (["claude", "--resume", stored], stored, "attach")
+        assert html.read_text() == before, "attach must not mutate the HTML"
+
+    def test_fork_survives_html_without_constant(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Pre-QUE-226 HTML has no ACTIVE_SESSION constant. The fork must still
+        succeed (in-memory-only fallback), not crash on the failed write."""
+        monkeypatch.setattr(devserver, "transcript_exists", lambda _sid, _cwd: True)
+        html = tmp_path / "QUE-11-legacy-review.html"
+        html.write_text("<html><script>// no ACTIVE_SESSION here</script></html>")
+        client, server = self._socketpair()
+        try:
+            spawn = devserver._cold_start_spawn(server, str(tmp_path), "authoring", html)
+        finally:
+            client.close()
+            server.close()
+        assert spawn is not None
+        _args, _active_sid, mode = spawn
+        assert mode == "fork"

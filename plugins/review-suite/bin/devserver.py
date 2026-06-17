@@ -524,8 +524,18 @@ def _cold_start_spawn(
     error frame when the authoring session has no resumable transcript. A
     stored ACTIVE_SESSION is resumed only if its transcript still exists;
     otherwise we fork once from the authoring session to inherit the plan
-    context. The fork's transcript need never persist -- reloads reattach to
-    the live process rather than `claude --resume` it.
+    context.
+
+    On the fork branch we persist the new fork's SID into the playground HTML's
+    ACTIVE_SESSION constant. This is what makes the browser<->terminal round
+    trip work: while the forked child is alive, page reloads reattach to it
+    in-memory; but once it exits (the "Hand off to terminal" button sends Ctrl+D
+    and releases it, or the devserver restarts) the live process is gone, and
+    the next open is a cold start. Without the persisted SID that cold start
+    re-forks from the authoring session and abandons everything the terminal
+    advanced. With it, the cold start finds the same SID the user resumed in
+    their terminal and `claude --resume`s it -- the two surfaces share one
+    session, handed back and forth in sequence.
     """
     stored_sid = read_active_session(playground_html) if playground_html else None
     if stored_sid and transcript_exists(stored_sid, cwd):
@@ -550,6 +560,15 @@ def _cold_start_spawn(
             pass
         return None
     new_sid = str(uuid.uuid4())
+    if playground_html is not None:
+        try:
+            write_active_session(playground_html, new_sid)
+        except (RuntimeError, OSError):
+            # Pre-QUE-226 HTML (no ACTIVE_SESSION constant) or a filesystem
+            # error: fall back to the in-memory-only model. Reloads still
+            # reattach to the live child; only cross-restart / post-handoff
+            # resume is lost. Not worth failing the spawn over.
+            pass
     return (
         ["claude", "--resume", session_id, "--fork-session", "--session-id", new_sid],
         new_sid,
