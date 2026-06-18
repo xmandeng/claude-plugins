@@ -201,6 +201,65 @@ def transcript_exists(sid: str, cwd: str) -> bool:
     return (Path.home() / ".claude" / "projects" / slug / f"{sid}.jsonl").is_file()
 
 
+# Seconds between polls while waiting for a freshly forked session's transcript
+# to land on disk (it appears after the fork completes its first turn).
+_FORK_PERSIST_POLL_SECONDS = 1.0
+
+
+def persist_fork_session(playground_html: "Path | None", cwd: str, fork_sid: str) -> bool:
+    """Persist a forked playground session's SID once its transcript exists.
+
+    A forked ``claude`` session writes no resumable ``<sid>.jsonl`` until it
+    completes its first turn. Until then, baking the SID into ACTIVE_SESSION (or
+    handing it to ``claude --resume``) yields a phantom id. This returns False
+    while the fork has not yet landed on disk, and True once it has -- writing
+    the SID into the playground HTML's ACTIVE_SESSION at that point so a later
+    cold start resumes the same session. A missing ACTIVE_SESSION constant
+    (legacy HTML) or a write error is tolerated: persistence is best-effort and
+    must never crash the bridge.
+    """
+    if not transcript_exists(fork_sid, cwd):
+        return False
+    if playground_html is not None:
+        try:
+            write_active_session(playground_html, fork_sid)
+        except (RuntimeError, OSError):
+            pass
+    return True
+
+
+def _watch_fork_persistence(
+    sess: "PtySession", playground_html: "Path | None", cwd: str
+) -> None:
+    """Wait for a forked child's transcript to land, then persist + upgrade.
+
+    Runs for the life of the forked child. The moment its transcript appears
+    (the fork's first turn completed), the SID is written into ACTIVE_SESSION
+    and the handoff target is upgraded from the authoring session to the now
+    resumable fork SID -- pushed to the attached browser so the "Hand off to
+    terminal" command copies an id ``claude --resume`` can actually open.
+    """
+    fork_sid = sess.active_sid
+    while sess.alive():
+        if persist_fork_session(playground_html, cwd, fork_sid):
+            sess.handoff_sid = fork_sid
+            try:
+                sess.send_control(
+                    json.dumps(
+                        {
+                            "type": "active_session",
+                            "sid": fork_sid,
+                            "mode": "fork",
+                            "handoff": fork_sid,
+                        }
+                    ).encode()
+                )
+            except OSError:
+                pass
+            return
+        time.sleep(_FORK_PERSIST_POLL_SECONDS)
+
+
 # =============================================================================
 # WebSocket framing (RFC 6455) — minimal text/binary support for the
 # /api/claude PTY bridge. Hand-rolled to avoid pulling websockets/asyncio into
@@ -395,6 +454,11 @@ class PtySession:
         self.fd = proc.fd  # type: ignore[attr-defined]
         self.active_sid = active_sid
         self.spawn_mode = spawn_mode
+        # The resumable id the "Hand off to terminal" button should copy. None
+        # until a forked session persists its transcript; set by the fork
+        # watcher at that point. Attach/resume sessions never need it (their
+        # active_sid is already resumable).
+        self.handoff_sid: str | None = None
         self._buf = bytearray()
         self._lock = threading.Lock()
         self._ws: socket.socket | None = None
@@ -456,6 +520,21 @@ class PtySession:
             if self._ws is sock:
                 self._ws = None
                 self.last_detach = time.monotonic()
+
+    def send_control(self, payload: bytes) -> None:
+        """Send a TEXT control frame to the currently attached WebSocket, if any.
+
+        Used to push session-state updates (e.g. an upgraded handoff target) to
+        the live browser. A no-op when no socket is attached -- the durable
+        state (ACTIVE_SESSION in the HTML) is what the next open reads.
+        """
+        with self._lock:
+            ws = self._ws
+        if ws is not None:
+            try:
+                ws_send_frame(ws, OP_TEXT, payload)
+            except OSError:
+                pass
 
     def write(self, data: bytes) -> None:
         try:
@@ -526,16 +605,15 @@ def _cold_start_spawn(
     otherwise we fork once from the authoring session to inherit the plan
     context.
 
-    On the fork branch we persist the new fork's SID into the playground HTML's
-    ACTIVE_SESSION constant. This is what makes the browser<->terminal round
-    trip work: while the forked child is alive, page reloads reattach to it
-    in-memory; but once it exits (the "Hand off to terminal" button sends Ctrl+D
-    and releases it, or the devserver restarts) the live process is gone, and
-    the next open is a cold start. Without the persisted SID that cold start
-    re-forks from the authoring session and abandons everything the terminal
-    advanced. With it, the cold start finds the same SID the user resumed in
-    their terminal and `claude --resume`s it -- the two surfaces share one
-    session, handed back and forth in sequence.
+    On the fork branch we do NOT persist the new fork's SID here. A freshly
+    forked `claude` session writes no resumable transcript until it completes
+    its first turn, so baking the SID into ACTIVE_SESSION now (or handing it to
+    `claude --resume`) yields a phantom id -- exactly the failure that broke the
+    browser<->terminal round trip. Persistence is deferred to the moment the
+    fork's transcript actually lands on disk: ``_watch_fork_persistence`` (started
+    by ``bridge_ws_to_claude_pty``) writes ACTIVE_SESSION and upgrades the handoff
+    target then, via ``persist_fork_session``. Until then the handoff target
+    stays the authoring session, which is always resumable.
     """
     stored_sid = read_active_session(playground_html) if playground_html else None
     if stored_sid and transcript_exists(stored_sid, cwd):
@@ -560,15 +638,9 @@ def _cold_start_spawn(
             pass
         return None
     new_sid = str(uuid.uuid4())
-    if playground_html is not None:
-        try:
-            write_active_session(playground_html, new_sid)
-        except (RuntimeError, OSError):
-            # Pre-QUE-226 HTML (no ACTIVE_SESSION constant) or a filesystem
-            # error: fall back to the in-memory-only model. Reloads still
-            # reattach to the live child; only cross-restart / post-handoff
-            # resume is lost. Not worth failing the spawn over.
-            pass
+    # Deliberately not persisted here -- see the docstring. The fork has no
+    # transcript until its first turn; persist_fork_session() writes the SID
+    # once it does.
     return (
         ["claude", "--resume", session_id, "--fork-session", "--session-id", new_sid],
         new_sid,
@@ -684,9 +756,25 @@ def bridge_ws_to_claude_pty(
             sess = PtySession(key, proc, active_sid, spawn_mode)
             _sessions[key] = sess
             _ensure_reaper_running()
+            # A freshly forked child has no resumable transcript yet. Watch for
+            # it to land, then persist the SID and upgrade the handoff target.
+            if spawn_mode == "fork":
+                threading.Thread(
+                    target=_watch_fork_persistence,
+                    args=(sess, playground_html, cwd),
+                    name=f"fork-watch[{active_sid[:8]}]",
+                    daemon=True,
+                ).start()
 
     # Announce the active session so the UI can show the right SID. A reused
     # session is reported as "attach" -- the client treats it as a reconnect.
+    # `handoff` is the resumable id the terminal-handoff button must copy: the
+    # live SID once its transcript exists (attach, or a fork that has taken a
+    # turn), else the authoring session, which is always resumable -- never the
+    # not-yet-persisted fork SID.
+    handoff_sid = sess.handoff_sid or (
+        sess.active_sid if transcript_exists(sess.active_sid, cwd) else session_id
+    )
     try:
         ws_send_frame(
             sock,
@@ -696,6 +784,7 @@ def bridge_ws_to_claude_pty(
                     "type": "active_session",
                     "sid": sess.active_sid,
                     "mode": "attach" if reused else sess.spawn_mode,
+                    "handoff": handoff_sid,
                 }
             ).encode(),
         )

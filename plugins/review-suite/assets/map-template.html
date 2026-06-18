@@ -2228,6 +2228,9 @@ let __claudeTerm = null;
 let __claudeFitAddon = null;
 let __claudeFit = null;
 let __forkedSid = null;
+// Resumable id for "Hand off to terminal" — the authoring session until a fork
+// persists its transcript, then the fork SID (server sends it via `handoff`).
+let __handoffSid = null;
 
 function toggleTerminal() {
   const panel = document.getElementById('termPanel');
@@ -2327,10 +2330,12 @@ function openTerminal() {
             && (msg.type === 'active_session' || msg.type === 'forked_session');
           if (isSessionMsg) {
             __forkedSid = msg.sid;
+            if (typeof msg.handoff === 'string' && msg.handoff) __handoffSid = msg.handoff;
+            const shownSid = __handoffSid || __forkedSid;
             const handoffSidEl = document.getElementById('handoffSid');
             if (handoffSidEl) {
-              handoffSidEl.textContent = __forkedSid;
-              handoffSidEl.title = __forkedSid;
+              handoffSidEl.textContent = shownSid;
+              handoffSidEl.title = shownSid;
             }
             return;
           }
@@ -2375,7 +2380,7 @@ function openTerminal() {
         handoffStatus.textContent = 'No session id embedded in this review doc.';
         return;
       }
-      const resumeSid = __forkedSid || CLAUDE_SESSION;
+      const resumeSid = __handoffSid || CLAUDE_SESSION;
       const cmd = `claude --resume ${resumeSid}`;
       let copied = false;
       try { await navigator.clipboard.writeText(cmd); copied = true; }

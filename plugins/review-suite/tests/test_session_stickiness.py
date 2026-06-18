@@ -320,10 +320,11 @@ def test_resolve_write_read_lifecycle(
 
 
 class TestColdStartSpawnPersistsForkSid:
-    """The browser<->terminal round trip depends on _cold_start_spawn writing
-    the fork SID into the HTML, not just reporting it over the wire. Before
-    this was wired, ACTIVE_SESSION stayed empty and every cold start re-forked
-    from the authoring session, abandoning whatever the terminal advanced."""
+    """The fork branch must NOT persist its SID at spawn time: a freshly forked
+    session has no transcript on disk until its first turn, so baking the SID
+    into ACTIVE_SESSION (or handing it to `claude --resume`) would yield a
+    phantom id. Persistence is deferred to persist_fork_session(), gated on the
+    transcript actually existing. Attach keeps resuming the already-real id."""
 
     def _socketpair(self):
         import socket
@@ -331,11 +332,14 @@ class TestColdStartSpawnPersistsForkSid:
         client, server = socket.socketpair()
         return client, server
 
-    def test_fork_writes_new_sid_into_html(
+    def test_fork_does_not_persist_until_transcript_exists(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        # Authoring session resumable; no stored fork yet (empty ACTIVE_SESSION).
-        monkeypatch.setattr(devserver, "transcript_exists", lambda _sid, _cwd: True)
+        # Authoring session resumable, but the not-yet-born fork has no
+        # transcript. ACTIVE_SESSION must stay empty -- no phantom baked in.
+        monkeypatch.setattr(
+            devserver, "transcript_exists", lambda sid, _cwd: sid == "authoring"
+        )
         html = _write_playground(tmp_path, "QUE-9-rt-review.html", active="")
         client, server = self._socketpair()
         try:
@@ -346,9 +350,11 @@ class TestColdStartSpawnPersistsForkSid:
         assert spawn is not None
         args, active_sid, mode = spawn
         assert mode == "fork"
-        # The returned fork SID is exactly what got persisted to the HTML.
-        assert devserver.read_active_session(html) == active_sid
         assert args[:3] == ["claude", "--resume", "authoring"]
+        # The fork SID is the new session id, not the authoring one ...
+        assert active_sid != "authoring"
+        # ... and it is NOT written to the HTML yet (no transcript on disk).
+        assert devserver.read_active_session(html) is None
 
     def test_attach_does_not_rewrite_html(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -383,3 +389,63 @@ class TestColdStartSpawnPersistsForkSid:
         assert spawn is not None
         _args, _active_sid, mode = spawn
         assert mode == "fork"
+
+
+# ---------------------------------------------------------------------------
+# persist_fork_session — the deferred, transcript-gated write that replaces
+# the old eager persist. Exercised against the REAL filesystem: only $HOME is
+# redirected so transcript_exists() does a genuine on-disk check (no mock).
+# ---------------------------------------------------------------------------
+
+
+class TestPersistForkSession:
+    """A fork SID is written into ACTIVE_SESSION only once its real transcript
+    lands on disk. Before the first turn there is no <sid>.jsonl, so the write
+    must be withheld -- otherwise the browser/terminal handoff copies a phantom
+    id that `claude --resume` cannot open (the bug this fixes)."""
+
+    def _make_transcript(self, home: Path, cwd: str, sid: str) -> None:
+        slug = re.sub(r"[/.]", "-", cwd)
+        d = home / ".claude" / "projects" / slug
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{sid}.jsonl").write_text('{"type":"summary"}\n')
+
+    def test_returns_false_and_withholds_write_without_transcript(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        cwd = str(tmp_path / "proj")
+        html = _write_playground(tmp_path, "QUE-12-review.html", active="")
+        sid = str(uuid.uuid4())
+        # No transcript on disk for this fork yet.
+        assert devserver.persist_fork_session(html, cwd, sid) is False
+        assert devserver.read_active_session(html) is None
+
+    def test_writes_active_session_once_transcript_exists(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        cwd = str(tmp_path / "proj")
+        html = _write_playground(tmp_path, "QUE-13-review.html", active="")
+        sid = str(uuid.uuid4())
+        self._make_transcript(home, cwd, sid)
+        assert devserver.persist_fork_session(html, cwd, sid) is True
+        assert devserver.read_active_session(html) == sid
+
+    def test_tolerates_legacy_html_without_constant(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        cwd = str(tmp_path / "proj")
+        html = tmp_path / "legacy.html"
+        html.write_text("<html><script>// no ACTIVE_SESSION here</script></html>")
+        sid = str(uuid.uuid4())
+        self._make_transcript(home, cwd, sid)
+        # Transcript exists -> True; the failed in-place write must not raise.
+        assert devserver.persist_fork_session(html, cwd, sid) is True

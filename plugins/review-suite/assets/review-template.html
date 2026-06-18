@@ -1609,6 +1609,9 @@ def example_function(arg: str) -> bool:
     let __claudeTerm = null;
     let __claudeFitAddon = null;
     let __forkedSid = null;
+    // Resumable id for "Hand off to terminal" — the authoring session until a
+    // fork persists its transcript, then the fork SID (server sends `handoff`).
+    let __handoffSid = null;
 
     (function initClaudeTerminal() {
       const host = document.getElementById('termHost');
@@ -1700,10 +1703,12 @@ def example_function(arg: str) -> bool:
                 && (msg.type === 'active_session' || msg.type === 'forked_session');
               if (isSessionMsg) {
                 __forkedSid = msg.sid;
+                if (typeof msg.handoff === 'string' && msg.handoff) __handoffSid = msg.handoff;
+                const shownSid = __handoffSid || __forkedSid;
                 const handoffSidEl = document.getElementById('handoffSid');
                 if (handoffSidEl) {
-                  handoffSidEl.textContent = __forkedSid;
-                  handoffSidEl.title = __forkedSid;
+                  handoffSidEl.textContent = shownSid;
+                  handoffSidEl.title = shownSid;
                 }
                 return;
               }
@@ -1754,7 +1759,7 @@ def example_function(arg: str) -> bool:
             handoffStatus.textContent = 'No session id embedded in this review doc.';
             return;
           }
-          const resumeSid = __forkedSid || CLAUDE_SESSION;
+          const resumeSid = __handoffSid || CLAUDE_SESSION;
           const cmd = `claude --resume ${resumeSid}`;
           let copied = false;
           try {
