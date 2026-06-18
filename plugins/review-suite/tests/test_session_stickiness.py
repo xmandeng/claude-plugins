@@ -1,28 +1,37 @@
-"""Tests for QUE-226 sticky-session helpers in devserver.py.
+"""Tests for the playground session bridge in devserver.py.
 
-These cover the embed-in-HTML model: the playground's active fork SID lives
-in the HTML's ``ACTIVE_SESSION`` constant, not a sibling file. Devserver
-helpers:
+Design (Option A — always re-fork from the authoring session):
+
+- The live `claude` child held in ``_sessions`` carries the conversation
+  across browser reloads. There is no on-disk fork state, because an
+  interactive forked `claude` never flushes a resumable transcript (only
+  print mode `-p` does -- verified by an integration probe against a real
+  binary, not reproducible in a unit test).
+- A cold start (first open, devserver restart, reaped idle session) always
+  re-forks from ``CLAUDE_SESSION`` (the authoring session), which IS
+  resumable. It never attaches to a stored fork id, because none exists.
+
+Helpers under test:
 
 - ``resolve_safe_html_target`` — validates that the playground path passed
   via the WS query string points at a real review-suite HTML inside the
   spawn cwd (path-traversal-safe, suffix-restricted, file-must-exist).
-- ``read_active_session`` — extracts the UUID from the HTML's
-  ``const ACTIVE_SESSION = "..."`` declaration. Returns None for missing
-  file, missing constant, empty value, or invalid UUID — all map to
-  "first open, fork fresh" semantics.
-- ``write_active_session`` — atomically mutates the constant in-place
-  via tmp + rename. Raises if the constant isn't there (older HTML).
+- ``transcript_exists`` — true iff ``~/.claude/projects/<slug>/<sid>.jsonl``
+  exists for the project cwd. **Not mocked** here: tests redirect ``$HOME``
+  and write real transcript files, so the on-disk check runs for real. The
+  previous suite stubbed this out, which is exactly why the dead-fork bug
+  survived five rewrites -- the one fact that was false in reality (a forked
+  transcript never lands) was the one fact the mock faked true.
+- ``_cold_start_spawn`` — always returns a fork argv when the authoring
+  session is resumable, else sends an error frame and returns None.
 
-The end-to-end PTY/WS flow is not exercised here — that needs a real
-``claude`` binary and is integration territory. What's covered here is
-the pure logic that decides attach vs. fork plus the in-HTML mutation
-mechanics.
+The end-to-end PTY/WS flow is not exercised here -- that needs a real
+`claude` binary and is integration territory.
 """
 
 from __future__ import annotations
 
-import re
+import socket
 import uuid
 from pathlib import Path
 
@@ -31,9 +40,8 @@ import pytest
 import devserver  # type: ignore[import-not-found]  # added to sys.path by conftest
 
 
-# A minimal HTML stub that contains the constants the helpers look for.
-# Real templates are 80+ KB; keeping fixtures small makes failure output
-# readable and isolates regressions to the logic under test.
+# A minimal HTML stub. Real templates are 80+ KB; small fixtures keep failure
+# output readable and isolate regressions to the logic under test.
 HTML_TEMPLATE = """\
 <!DOCTYPE html>
 <html>
@@ -42,8 +50,6 @@ HTML_TEMPLATE = """\
 <script>
 const PLAN_NAME = "test plan";
 const CLAUDE_SESSION = "authoring-session-id-placeholder";
-// QUE-226 marker
-const ACTIVE_SESSION = "{active}";
 const LAYOUTS_FILE = "test-layouts.json";
 </script>
 </body>
@@ -51,11 +57,26 @@ const LAYOUTS_FILE = "test-layouts.json";
 """
 
 
-def _write_playground(dir_path: Path, name: str, active: str = "") -> Path:
+def _write_playground(dir_path: Path, name: str) -> Path:
     """Write a stub playground HTML and return its path."""
     p = dir_path / name
-    p.write_text(HTML_TEMPLATE.format(active=active))
+    p.write_text(HTML_TEMPLATE)
     return p
+
+
+def _make_transcript(home: Path, cwd: str, sid: str) -> None:
+    """Create a real ``<sid>.jsonl`` under the project slug for ``cwd``.
+
+    Mirrors how Claude records per-project transcripts so ``transcript_exists``
+    -- which we deliberately do NOT mock -- finds (or doesn't find) a genuine
+    file on disk.
+    """
+    import re
+
+    slug = re.sub(r"[/.]", "-", cwd)
+    d = home / ".claude" / "projects" / slug
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{sid}.jsonl").write_text('{"type":"summary"}\n')
 
 
 # ---------------------------------------------------------------------------
@@ -64,8 +85,9 @@ def _write_playground(dir_path: Path, name: str, active: str = "") -> Path:
 
 
 class TestResolveSafeHtmlTarget:
-    """Same security envelope as resolve_safe_layouts_target, applied to the
-    playground HTML lookup introduced for QUE-226."""
+    """The playground path from the WS query string must resolve to a real
+    review-suite HTML inside the spawn cwd (path-traversal-safe,
+    suffix-restricted, file-must-exist)."""
 
     def test_resolves_design_review_html(self, tmp_path: Path) -> None:
         (tmp_path / ".design-review").mkdir()
@@ -130,9 +152,7 @@ class TestResolveSafeHtmlTarget:
         assert result is None
 
     def test_rejects_missing_file(self, tmp_path: Path) -> None:
-        """The HTML must actually exist for the WS bridge to operate on it.
-        A request pointing at a not-yet-rendered playground is rejected so
-        we don't end up writing ACTIVE_SESSION into a non-existent file."""
+        """The HTML must actually exist for the WS bridge to operate on it."""
         (tmp_path / ".plan-review").mkdir()
         assert devserver.resolve_safe_html_target(
             ".plan-review/never-rendered-review.html", str(tmp_path)
@@ -140,246 +160,145 @@ class TestResolveSafeHtmlTarget:
 
 
 # ---------------------------------------------------------------------------
-# read_active_session
+# transcript_exists — real on-disk check (no mock)
 # ---------------------------------------------------------------------------
 
 
-class TestReadActiveSession:
-    """Read-side discipline: only valid UUIDs become a stored SID. Everything
-    else maps to None so the caller takes the fork-fresh path."""
+class TestTranscriptExists:
+    """The resumability oracle. Redirect $HOME and write real transcript files
+    so the check runs against the actual filesystem -- the behavior the old
+    mocked suite never verified."""
 
-    def test_returns_none_for_missing_file(self, tmp_path: Path) -> None:
-        assert devserver.read_active_session(tmp_path / "nope.html") is None
-
-    def test_returns_none_for_empty_active_session(self, tmp_path: Path) -> None:
-        """The post-generation state: ACTIVE_SESSION = "". This is "first
-        open, no fork yet" — must NOT be treated as a stored UUID."""
-        p = _write_playground(tmp_path, "test-review.html", active="")
-        assert devserver.read_active_session(p) is None
-
-    def test_returns_valid_uuid(self, tmp_path: Path) -> None:
-        sid = str(uuid.uuid4())
-        p = _write_playground(tmp_path, "test-review.html", active=sid)
-        assert devserver.read_active_session(p) == sid
-
-    def test_returns_none_for_garbage_value(self, tmp_path: Path) -> None:
-        """User-edited bogus content (or 36-char-but-not-UUID) must not be
-        treated as a stored SID — avoids feeding `claude --resume <garbage>`
-        and getting an opaque error."""
-        p = _write_playground(tmp_path, "test-review.html", active="not-a-uuid-at-all")
-        assert devserver.read_active_session(p) is None
-
-    def test_returns_none_for_uuid_like_but_invalid_hex(self, tmp_path: Path) -> None:
-        p = _write_playground(
-            tmp_path, "test-review.html", active="zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz"
-        )
-        assert devserver.read_active_session(p) is None
-
-    def test_returns_none_when_constant_missing(self, tmp_path: Path) -> None:
-        """Older rendered HTML from a pre-QUE-226 plugin doesn't have
-        ACTIVE_SESSION at all. Must map to None (fork-fresh) — not raise."""
-        p = tmp_path / "old-design-review.html"
-        p.write_text(
-            "<html><script>\n"
-            'const CLAUDE_SESSION = "abc";\n'
-            "// no ACTIVE_SESSION\n"
-            "</script></html>\n"
-        )
-        assert devserver.read_active_session(p) is None
-
-    def test_tolerates_indentation(self, tmp_path: Path) -> None:
-        """plan-review-template.html declares its constants inside an
-        indented <script> block; design-review and architecture-map use no
-        indent. The regex anchor must accept both."""
-        sid = str(uuid.uuid4())
-        p = tmp_path / "indented-review.html"
-        p.write_text(
-            "<html><script>\n"
-            '    const CLAUDE_SESSION = "auth";\n'
-            f'    const ACTIVE_SESSION = "{sid}";\n'
-            "</script></html>\n"
-        )
-        assert devserver.read_active_session(p) == sid
-
-
-# ---------------------------------------------------------------------------
-# write_active_session
-# ---------------------------------------------------------------------------
-
-
-class TestWriteActiveSession:
-    """Atomic in-place mutation of the HTML's ACTIVE_SESSION constant."""
-
-    def test_writes_sid_into_constant(self, tmp_path: Path) -> None:
-        sid = str(uuid.uuid4())
-        p = _write_playground(tmp_path, "test-review.html", active="")
-        devserver.write_active_session(p, sid)
-        assert devserver.read_active_session(p) == sid
-
-    def test_overwrites_existing_value(self, tmp_path: Path) -> None:
-        """If the user reopens after a previous fork, the new SID replaces
-        the old. No accumulation — one active session at a time."""
-        old = str(uuid.uuid4())
-        new = str(uuid.uuid4())
-        p = _write_playground(tmp_path, "test-review.html", active=old)
-        devserver.write_active_session(p, new)
-        assert devserver.read_active_session(p) == new
-
-    def test_preserves_rest_of_html(self, tmp_path: Path) -> None:
-        """The mutation must be surgical — only the ACTIVE_SESSION value
-        changes. Other constants (CLAUDE_SESSION, PLAN_NAME, etc.) and the
-        HTML body remain untouched."""
-        sid = str(uuid.uuid4())
-        p = _write_playground(tmp_path, "test-review.html", active="")
-        before = p.read_text()
-        devserver.write_active_session(p, sid)
-        after = p.read_text()
-        # Everything outside the ACTIVE_SESSION value should be byte-identical.
-        # We replace just the value in `before` and compare.
-        expected = re.sub(
-            r'(const ACTIVE_SESSION = ")[^"]*(")',
-            lambda m: m.group(1) + sid + m.group(2),
-            before,
-        )
-        assert after == expected
-
-    def test_raises_when_constant_missing(self, tmp_path: Path) -> None:
-        """Older HTML without ACTIVE_SESSION is a hard error — we can't
-        invent a place to write the SID. The caller surfaces this to the
-        UI via the `session_persist_failed` message; future opens will
-        keep fork-fresh-ing, which is acceptable for pre-QUE-226 HTMLs."""
-        p = tmp_path / "old-review.html"
-        p.write_text("<html><script>const CLAUDE_SESSION = \"x\";</script></html>")
-        with pytest.raises(RuntimeError, match="ACTIVE_SESSION"):
-            devserver.write_active_session(p, str(uuid.uuid4()))
-
-    def test_no_lingering_tmp_file_on_success(self, tmp_path: Path) -> None:
-        sid = str(uuid.uuid4())
-        p = _write_playground(tmp_path, "test-review.html", active="")
-        devserver.write_active_session(p, sid)
-        leftovers = [child for child in tmp_path.iterdir() if child.suffix == ".tmp"]
-        assert leftovers == []
-
-    def test_round_trip(self, tmp_path: Path) -> None:
-        """Write then read must yield the same SID — catches any encoding
-        or whitespace drift between the two functions."""
-        sid = str(uuid.uuid4())
-        p = _write_playground(tmp_path, "test-review.html", active="")
-        devserver.write_active_session(p, sid)
-        assert devserver.read_active_session(p) == sid
-
-
-# ---------------------------------------------------------------------------
-# End-to-end: the lifecycle the WS bridge actually walks through
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "html_dir,html_name",
-    [
-        (".design-review",    "QUE-1-x-design-review.html"),
-        (".plan-review",      "QUE-2-y-review.html"),
-        (".architecture-map", "QUE-3-z-architecture-map.html"),
-    ],
-)
-def test_resolve_write_read_lifecycle(
-    tmp_path: Path, html_dir: str, html_name: str
-) -> None:
-    """Walk the whole lifecycle the WS bridge actually performs:
-
-    1. Browser sends WS with `?playground=<rel>`; resolver maps it to an
-       absolute HTML path under spawn_cwd.
-    2. First open: read_active_session returns None (empty constant) →
-       fork would happen → write_active_session persists new SID.
-    3. Subsequent open: read_active_session returns the stored SID →
-       attach mode fires.
-    """
-    (tmp_path / html_dir).mkdir()
-    _write_playground(tmp_path / html_dir, html_name, active="")
-    rel = f"{html_dir}/{html_name}"
-
-    # Step 1: resolve
-    target = devserver.resolve_safe_html_target(rel, str(tmp_path))
-    assert target is not None
-    assert target.name == html_name
-
-    # Step 2: first-open state — no stored SID
-    assert devserver.read_active_session(target) is None
-
-    # Step 2 (continued): persist a new fork SID
-    sid = str(uuid.uuid4())
-    devserver.write_active_session(target, sid)
-
-    # Step 3: subsequent-open state — stored SID emerges
-    assert devserver.read_active_session(target) == sid
-
-
-# ---------------------------------------------------------------------------
-# _cold_start_spawn — the fork branch must persist ACTIVE_SESSION for real
-# ---------------------------------------------------------------------------
-
-
-class TestColdStartSpawnPersistsForkSid:
-    """The browser<->terminal round trip depends on _cold_start_spawn writing
-    the fork SID into the HTML, not just reporting it over the wire. Before
-    this was wired, ACTIVE_SESSION stayed empty and every cold start re-forked
-    from the authoring session, abandoning whatever the terminal advanced."""
-
-    def _socketpair(self):
-        import socket
-
-        client, server = socket.socketpair()
-        return client, server
-
-    def test_fork_writes_new_sid_into_html(
+    def test_true_when_jsonl_present(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        # Authoring session resumable; no stored fork yet (empty ACTIVE_SESSION).
-        monkeypatch.setattr(devserver, "transcript_exists", lambda _sid, _cwd: True)
-        html = _write_playground(tmp_path, "QUE-9-rt-review.html", active="")
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        cwd = str(tmp_path / "proj")
+        sid = str(uuid.uuid4())
+        _make_transcript(home, cwd, sid)
+        assert devserver.transcript_exists(sid, cwd) is True
+
+    def test_false_when_absent(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        cwd = str(tmp_path / "proj")
+        assert devserver.transcript_exists(str(uuid.uuid4()), cwd) is False
+
+    def test_false_for_empty_sid(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        assert devserver.transcript_exists("", str(tmp_path / "proj")) is False
+
+    def test_false_when_transcript_is_under_a_different_cwd_slug(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A transcript recorded under project A is invisible when resuming
+        from project B -- the slug is part of the lookup."""
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        sid = str(uuid.uuid4())
+        _make_transcript(home, str(tmp_path / "projA"), sid)
+        assert devserver.transcript_exists(sid, str(tmp_path / "projB")) is False
+
+
+# ---------------------------------------------------------------------------
+# _cold_start_spawn — always re-fork from the authoring session
+# ---------------------------------------------------------------------------
+
+
+class TestColdStartSpawn:
+    """A cold start always forks from the authoring session (never attaches to
+    a stored fork id -- forks aren't resumable). It bails only if the authoring
+    session itself has no transcript on disk."""
+
+    @staticmethod
+    def _socketpair() -> tuple[socket.socket, socket.socket]:
+        return socket.socketpair()
+
+    def test_forks_from_authoring_when_resumable(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        cwd = str(tmp_path / "proj")
+        _make_transcript(home, cwd, "authoring")  # authoring IS resumable
+
         client, server = self._socketpair()
         try:
-            spawn = devserver._cold_start_spawn(server, str(tmp_path), "authoring", html)
+            spawn = devserver._cold_start_spawn(server, cwd, "authoring")
         finally:
             client.close()
             server.close()
+
         assert spawn is not None
         args, active_sid, mode = spawn
         assert mode == "fork"
-        # The returned fork SID is exactly what got persisted to the HTML.
-        assert devserver.read_active_session(html) == active_sid
-        assert args[:3] == ["claude", "--resume", "authoring"]
+        # Forks from the authoring session with a fresh, distinct session id.
+        assert args == [
+            "claude", "--resume", "authoring",
+            "--fork-session", "--session-id", active_sid,
+        ]
+        assert active_sid != "authoring"
+        # active_sid is a real uuid (so the live child has a stable handle)
+        uuid.UUID(active_sid)
 
-    def test_attach_does_not_rewrite_html(
+    def test_errors_when_authoring_not_resumable(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        monkeypatch.setattr(devserver, "transcript_exists", lambda _sid, _cwd: True)
-        stored = str(uuid.uuid4())
-        html = _write_playground(tmp_path, "QUE-10-rt-review.html", active=stored)
-        before = html.read_text()
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        cwd = str(tmp_path / "proj")
+        # No transcript for "authoring" anywhere on disk.
+
         client, server = self._socketpair()
+        client.settimeout(2.0)
         try:
-            spawn = devserver._cold_start_spawn(server, str(tmp_path), "authoring", html)
+            spawn = devserver._cold_start_spawn(server, cwd, "authoring")
+            # An error frame is written to the socket before returning None.
+            sent = client.recv(4096)
         finally:
             client.close()
             server.close()
-        assert spawn == (["claude", "--resume", stored], stored, "attach")
-        assert html.read_text() == before, "attach must not mutate the HTML"
 
-    def test_fork_survives_html_without_constant(
+        assert spawn is None
+        assert sent, "expected an error frame on the socket"
+        assert b"no resumable transcript" in sent
+
+    def test_always_forks_even_with_a_stale_id_in_html(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Pre-QUE-226 HTML has no ACTIVE_SESSION constant. The fork must still
-        succeed (in-memory-only fallback), not crash on the failed write."""
-        monkeypatch.setattr(devserver, "transcript_exists", lambda _sid, _cwd: True)
-        html = tmp_path / "QUE-11-legacy-review.html"
-        html.write_text("<html><script>// no ACTIVE_SESSION here</script></html>")
+        """Regression guard for the original bug: a baked-in fork id that has
+        no transcript must never be resumed. _cold_start_spawn no longer reads
+        the HTML at all -- it always re-forks from the (resumable) authoring
+        session. A phantom id can no longer produce a dead terminal."""
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        cwd = str(tmp_path / "proj")
+        _make_transcript(home, cwd, "authoring")
+        # A stale fork id that is NOT on disk (the 53a7aa7e-class phantom).
+        phantom = str(uuid.uuid4())
+
         client, server = self._socketpair()
         try:
-            spawn = devserver._cold_start_spawn(server, str(tmp_path), "authoring", html)
+            spawn = devserver._cold_start_spawn(server, cwd, "authoring")
         finally:
             client.close()
             server.close()
+
         assert spawn is not None
-        _args, _active_sid, mode = spawn
+        args, active_sid, mode = spawn
         assert mode == "fork"
+        assert "authoring" in args and "--fork-session" in args
+        assert active_sid != phantom  # never resumes the phantom

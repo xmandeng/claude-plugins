@@ -319,7 +319,6 @@ def validate_inline_js(html: str, kind: str) -> None:
     for var in KIND_DATA_VARS[kind] + [
         "PLAN_NAME",
         "CLAUDE_SESSION",
-        "ACTIVE_SESSION",
         "LAYOUTS_FILE",
         "SCOPE_HEADER",
     ]:

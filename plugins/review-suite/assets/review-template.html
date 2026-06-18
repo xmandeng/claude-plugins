@@ -988,11 +988,6 @@ def example_function(arg: str) -> bool:
     // authoring session's id. The terminal panel uses this to spawn
     // `claude --resume <sid>` via the devserver's /api/claude?session= endpoint.
     const CLAUDE_SESSION = "SESSION_ID_HERE";
-    // QUE-226: ACTIVE_SESSION holds the SID of the fork spawned on first WS
-    // connect; subsequent connects re-attach to it. Devserver mutates this
-    // constant in-place after the first fork via atomic write. Blank it
-    // (set back to "") to reset and re-fork from CLAUDE_SESSION on next open.
-    const ACTIVE_SESSION = "";
 
     // Persistence — save/restore review state across sessions
     const STORAGE_KEY = 'review-state:' + PLAN_NAME;
@@ -1609,6 +1604,9 @@ def example_function(arg: str) -> bool:
     let __claudeTerm = null;
     let __claudeFitAddon = null;
     let __forkedSid = null;
+    // Resumable id for "Hand off to terminal" — the authoring session until a
+    // fork persists its transcript, then the fork SID (server sends `handoff`).
+    let __handoffSid = null;
 
     (function initClaudeTerminal() {
       const host = document.getElementById('termHost');
@@ -1661,10 +1659,9 @@ def example_function(arg: str) -> bool:
           return;
         }
         const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        // QUE-226: pass the playground HTML path so the devserver can read
-        // and update this HTML's ACTIVE_SESSION constant and keep us
-        // attached to the same fork across refreshes / "Send to Claude"
-        // clicks / reopens.
+        // Pass the playground HTML path so the devserver can key the live
+        // `claude` child to this page and reattach the same process across
+        // refreshes / "Send to Claude" clicks / reopens.
         const playgroundPath = location.pathname.replace(/^\//, '');
         const url = `${proto}//${location.host}/api/claude?session=${encodeURIComponent(CLAUDE_SESSION)}&playground=${encodeURIComponent(playgroundPath)}`;
         setStatus('connecting…');
@@ -1700,10 +1697,12 @@ def example_function(arg: str) -> bool:
                 && (msg.type === 'active_session' || msg.type === 'forked_session');
               if (isSessionMsg) {
                 __forkedSid = msg.sid;
+                if (typeof msg.handoff === 'string' && msg.handoff) __handoffSid = msg.handoff;
+                const shownSid = __handoffSid || __forkedSid;
                 const handoffSidEl = document.getElementById('handoffSid');
                 if (handoffSidEl) {
-                  handoffSidEl.textContent = __forkedSid;
-                  handoffSidEl.title = __forkedSid;
+                  handoffSidEl.textContent = shownSid;
+                  handoffSidEl.title = shownSid;
                 }
                 return;
               }
@@ -1754,7 +1753,7 @@ def example_function(arg: str) -> bool:
             handoffStatus.textContent = 'No session id embedded in this review doc.';
             return;
           }
-          const resumeSid = __forkedSid || CLAUDE_SESSION;
+          const resumeSid = __handoffSid || CLAUDE_SESSION;
           const cmd = `claude --resume ${resumeSid}`;
           let copied = false;
           try {
