@@ -1716,11 +1716,6 @@ function escHtml(s) {
 // Populated by the architecture-map skill at HTML-generation time.
 const PLAN_NAME = "TITLE HERE";
 const CLAUDE_SESSION = "SESSION_ID_HERE";
-// QUE-226: ACTIVE_SESSION holds the SID of the fork spawned on first WS
-// connect; subsequent connects re-attach to it. Devserver mutates this
-// constant in-place after the first fork via atomic write. Blank it
-// (set back to "") to reset and re-fork from CLAUDE_SESSION on next open.
-const ACTIVE_SESSION = "";
 const LAYOUTS_FILE = 'LAYOUTS_FILE_HERE';
 const SCOPE_HEADER = "SCOPE_HEADER_HERE";
 
@@ -2296,9 +2291,9 @@ function openTerminal() {
       return;
     }
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // QUE-226: pass the playground HTML path so the devserver can read
-    // and update this HTML's ACTIVE_SESSION constant and keep us attached
-    // to the same fork across refreshes / "Send to Claude" clicks / reopens.
+    // Pass the playground HTML path so the devserver can key the live
+    // `claude` child to this page and reattach the same process across
+    // refreshes / "Send to Claude" clicks / reopens.
     const playgroundPath = location.pathname.replace(/^\//, '');
     const url = `${proto}//${location.host}/api/claude?session=${encodeURIComponent(CLAUDE_SESSION)}&playground=${encodeURIComponent(playgroundPath)}`;
     setStatus('connecting…');

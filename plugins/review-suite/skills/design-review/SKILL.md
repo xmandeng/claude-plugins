@@ -227,9 +227,9 @@ State is tracked via `sessionStorage` keyed off the review doc's filename.
 
 ## Session Resume
 
-The devserver's PTY bridge spawns `claude --resume <session-id> --fork-session` **exactly once** per playground — on the first WebSocket connect after the HTML is rendered. The new fork's session id is written into the HTML's `ACTIVE_SESSION` JS constant via targeted in-place mutation (tmp + atomic rename). Every subsequent open (browser refresh, "Send to Claude" click, next-day return) reads `ACTIVE_SESSION` from the HTML and re-attaches to the same fork via `claude --resume <stored-sid>` — no new fork is spawned. One session per playground for its lifetime; context isn't thrown away by a re-open. The HTML is the only artifact — no sidecar state file. Blank out `ACTIVE_SESSION` in the HTML (set it back to `""`) to reset and re-fork on the next open.
+The devserver's PTY bridge forks a live `claude` child from `CLAUDE_SESSION` (the authoring session) on the first WebSocket connect, and keeps that child alive for the playground's lifetime, keyed by the HTML path. A browser refresh, "Send to Claude" click, or next-day return re-binds to the **same live process** and replays its recent output — context survives reloads without resuming anything from disk.
 
-If the stored session is unreachable when re-attaching (e.g., the transcript was archived), the `claude` CLI's error surfaces in the embedded terminal. No silent fork-fallback — the user sees the failure and can blank `ACTIVE_SESSION` to recover deliberately.
+Interactive forked `claude` sessions never flush a resumable transcript to disk (verified empirically: only print mode `-p` does), so there is no fork state to persist or re-attach to across a devserver restart. If the live child is gone — devserver restarted, or the session reaped after a long idle — the next open **re-forks from `CLAUDE_SESSION`**, recovering the plan/authoring context (the in-playground conversation since the fork is not restored). The authoring session must itself be resumable; if its transcript is missing, the bridge surfaces an error asking you to regenerate the review from a live session. There is no `ACTIVE_SESSION` constant — a forked id is never durable, so nothing is baked back into the HTML.
 
 ### Handoff
 
