@@ -2373,9 +2373,13 @@ function sendToClaude() {
   const preambleKey = 'arch-review-preamble-sent:' + location.pathname;
   let body = prompt;
   if (!sessionStorage.getItem(preambleKey)) {
-    body = `**Context switch:** you are now in the design-review playground. The diagram is at \`${location.pathname}\`. Discuss the feedback below conversationally. Do NOT edit the HTML or the layouts JSON until I explicitly say to update. When discussion on a node wraps, ask whether to update the document.\n\n---\n\n${prompt}`;
+    body = `**Context switch:** you are now in the design-review playground — a planning session, not a coding session. The diagram is at \`${location.pathname}\`. Discuss the feedback below conversationally. Do NOT edit the HTML or the layouts JSON until I explicitly say to update. Never write or modify project code, and never begin implementing the design — implementation happens later, in a separate session. The final tasks of this session are committing the finalized design and uploading it to Jira; nothing beyond that. When discussion on a node wraps, ask whether to update the document.\n\n---\n\n${prompt}`;
     sessionStorage.setItem(preambleKey, '1');
   }
+  // Standing guard on every send: the preamble above is one-shot per browser
+  // session, but the PTY child can be re-forked underneath a long-lived tab —
+  // the fresh child would otherwise never see the planning-only rule.
+  body += '\n---\nReminder: planning only. Do not write or modify project code in this session; the final tasks are committing the design and uploading it to Jira.\n';
   const encoder = new TextEncoder();
   __claudeWS.send(encoder.encode(body + '\n'));
   btn.textContent = 'Sent';

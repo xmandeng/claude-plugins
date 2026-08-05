@@ -1801,9 +1801,21 @@ def example_function(arg: str) -> bool:
       if (!rightPanel.classList.contains('collapsed')) {
         document.getElementById('rightToggle').click();
       }
+      // One-shot context-switch preamble, scoped by filename so each review doc
+      // emits it once per browser session.
+      const preambleKey = 'plan-review-preamble-sent:' + location.pathname;
+      let body = prompt;
+      if (!sessionStorage.getItem(preambleKey)) {
+        body = `**Context switch:** you are now in the plan-review playground — a planning session, not a coding session. The review document is at \`${location.pathname}\`. Discuss the feedback below conversationally. Do NOT edit the HTML until I explicitly say to update. Never write or modify project code, and never begin implementing the plan — implementation happens later, in a separate session. The final tasks of this session are committing the finalized plan and uploading it to Jira; nothing beyond that. When discussion on a section wraps, ask whether to update the document.\n\n---\n\n${prompt}`;
+        sessionStorage.setItem(preambleKey, '1');
+      }
+      // Standing guard on every send: the preamble above is one-shot per browser
+      // session, but the PTY child can be re-forked underneath a long-lived tab —
+      // the fresh child would otherwise never see the planning-only rule.
+      body += '\n---\nReminder: planning only. Do not write or modify project code in this session; the final tasks are committing the plan and uploading it to Jira.\n';
       const encoder = new TextEncoder();
       // Newline at the end so Claude Code submits the bundle as one turn.
-      __claudeWS.send(encoder.encode(prompt + '\n'));
+      __claudeWS.send(encoder.encode(body + '\n'));
       btn.textContent = 'Sent';
       btn.classList.add('sent');
       if (__claudeTerm) __claudeTerm.focus();

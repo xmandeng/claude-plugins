@@ -210,6 +210,8 @@ Comment: ...
 ...
 ```
 
+**The playground is a planning surface, not a coding session.** Feedback — however actionable it sounds — is input to the *design document*, never a request to start implementing. Do not write or modify project code, create implementation branches, or begin executing the design. The session's final tasks are committing the finalized design and uploading it to Jira; implementation happens later, in a separate session.
+
 When you receive the bundle:
 
 1. **Parse** the sections (revision / question / approved).
@@ -221,9 +223,9 @@ When you receive the bundle:
 
 On the first Send-to-Claude click per browser session, the template prepends a one-time preamble:
 
-> **Context switch:** you are now in the design-review playground. The diagram is at `<path>`. Discuss the feedback below conversationally. Do NOT edit the HTML or the layouts JSON until I explicitly say to update. When discussion on a node wraps, ask whether to update the document.
+> **Context switch:** you are now in the design-review playground — a planning session, not a coding session. The diagram is at `<path>`. Discuss the feedback below conversationally. Do NOT edit the HTML or the layouts JSON until I explicitly say to update. Never write or modify project code, and never begin implementing the design — implementation happens later, in a separate session. The final tasks of this session are committing the finalized design and uploading it to Jira; nothing beyond that. When discussion on a node wraps, ask whether to update the document.
 
-State is tracked via `sessionStorage` keyed off the review doc's filename.
+State is tracked via `sessionStorage` keyed off the review doc's filename. Because the preamble is one-shot but the PTY child can be re-forked underneath a long-lived browser tab, every send also appends a short standing reminder: planning only, no project code, final tasks are committing the design and uploading it to Jira.
 
 ## Session Resume
 

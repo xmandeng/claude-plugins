@@ -159,6 +159,8 @@ Each section should be **independently reviewable** — one decision or approval
 
 ## Handling Review Feedback
 
+**The playground is a planning surface, not a coding session.** Feedback — however actionable it sounds — is input to the *plan document*, never a request to start implementing. Do not write or modify project code, create implementation branches, or begin executing plan steps from inside the playground. The session's final tasks are committing the finalized plan and uploading it to Jira; implementation happens later, in a separate session.
+
 When the reviewer sends feedback (either via the "Send to Claude" button, which writes directly to the embedded Claude terminal, or via pasted "Copy Feedback" output if they're not using the PTY bridge):
 
 1. **Parse** the approved / revision / question sections from the feedback payload.
@@ -169,10 +171,12 @@ When the reviewer sends feedback (either via the "Send to Claude" button, which 
 
 ## Session Context Preamble
 
-The review template's "Send to Claude" button prepends a one-time context-switch preamble to the first click of a browser session, then omits it on subsequent clicks. State is tracked via `localStorage` keyed by the review doc's filename.
+The review template's "Send to Claude" button prepends a one-time context-switch preamble to the first click of a browser session, then omits it on subsequent clicks. State is tracked via `sessionStorage` keyed by the review doc's filename.
 
 The preamble text:
-> **Context switch:** you are now in the plan-review playground. The review document is at `<path>`. Discuss the feedback below conversationally. Do NOT edit the HTML until I explicitly say to update. When discussion on a section wraps, ask whether to update the document.
+> **Context switch:** you are now in the plan-review playground — a planning session, not a coding session. The review document is at `<path>`. Discuss the feedback below conversationally. Do NOT edit the HTML until I explicitly say to update. Never write or modify project code, and never begin implementing the plan — implementation happens later, in a separate session. The final tasks of this session are committing the finalized plan and uploading it to Jira; nothing beyond that. When discussion on a section wraps, ask whether to update the document.
+
+Because the preamble is one-shot but the PTY child can be re-forked underneath a long-lived browser tab, every send also appends a short standing reminder: planning only, no project code, final tasks are committing the plan and uploading it to Jira.
 
 ## Session Resume
 
