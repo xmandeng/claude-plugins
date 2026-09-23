@@ -2283,6 +2283,13 @@ function openTerminal() {
     if (kind) status.classList.add(kind);
   }
 
+  // Auto-reconnect: the devserver keeps the claude process alive across
+  // dropped sockets (sleep, Wi-Fi, port-forwarder hiccups), so a lost
+  // connection just re-attaches. Not after the server says the session was
+  // taken by another tab, the process exited, or it sent a fatal error.
+  let reconnectDelay = 1000;
+  let noReconnect = false;
+  let everConnected = false;
   function connect() {
     if (!CLAUDE_SESSION || CLAUDE_SESSION === 'SESSION_ID_HERE') {
       setStatus('error', 'error');
@@ -2308,6 +2315,11 @@ function openTerminal() {
     __claudeWS = ws;
 
     ws.onopen = () => {
+      reconnectDelay = 1000;
+      // The server replays its scrollback buffer on attach; clear first so a
+      // reconnect repaints instead of duplicating the conversation.
+      if (everConnected) term.reset();
+      everConnected = true;
       __claudeReady = true;
       setStatus('connected', 'connected');
       updateSendButtonState();
@@ -2323,6 +2335,17 @@ function openTerminal() {
           // still accepted for backward compat.
           const isSessionMsg = msg && typeof msg.sid === 'string'
             && (msg.type === 'active_session' || msg.type === 'forked_session');
+          if (msg && msg.type === 'evicted') {
+            noReconnect = true;
+            term.writeln('\r\n[devserver] this playground was opened in another tab. Reload to take it back.\r\n');
+            return;
+          }
+          if (msg && msg.type === 'exited') {
+            noReconnect = true;
+            term.writeln('\r\n[devserver] Claude exited. Reload the page to resume this conversation.\r\n');
+            return;
+          }
+          if (msg && msg.error) noReconnect = true;
           if (isSessionMsg) {
             __forkedSid = msg.sid;
             if (typeof msg.handoff === 'string' && msg.handoff) __handoffSid = msg.handoff;
@@ -2345,15 +2368,25 @@ function openTerminal() {
       __claudeReady = false;
       updateSendButtonState();
       setStatus('disconnected');
-      term.writeln('\r\n[devserver] session closed. refresh page to reconnect.\r\n');
+      onDataSub.dispose();
+      onResizeSub.dispose();
+      if (noReconnect) return;
+      if (!everConnected) {
+        term.writeln('\r\n[devserver] could not connect. Open this page via the URL the skill printed');
+        term.writeln('[devserver] (it carries the devserver access token), then reload.\r\n');
+        return;
+      }
+      setStatus('reconnecting…');
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 15000);
     };
 
     const encoder = new TextEncoder();
-    term.onData(data => {
+    const onDataSub = term.onData(data => {
       if (ws.readyState !== WebSocket.OPEN) return;
       try { ws.send(encoder.encode(data)); } catch { /* ignore */ }
     });
-    term.onResize(({ cols, rows }) => {
+    const onResizeSub = term.onResize(({ cols, rows }) => {
       if (ws.readyState !== WebSocket.OPEN) return;
       try { ws.send(JSON.stringify({ type: 'resize', cols, rows })); } catch { /* ignore */ }
     });
@@ -2380,6 +2413,7 @@ function openTerminal() {
       let copied = false;
       try { await navigator.clipboard.writeText(cmd); copied = true; }
       catch { /* non-HTTPS or denied — fall through */ }
+      noReconnect = true;  // the terminal owns the session now
       if (__claudeWS && __claudeWS.readyState === WebSocket.OPEN) {
         try { __claudeWS.send(new Uint8Array([0x04])); } catch { /* ignore */ }
       }
@@ -2419,9 +2453,13 @@ function sendToClaude() {
   const preambleKey = 'arch-map-preamble-sent:' + location.pathname;
   let body = prompt;
   if (!sessionStorage.getItem(preambleKey)) {
-    body = `**Context switch:** you are now in the architecture-map playground. The map is at \`${location.pathname}\`. Discuss the feedback below conversationally. Do NOT edit the HTML or the layouts JSON until I explicitly say to update. When discussion on a node wraps, ask whether to update the document.\n\n---\n\n${prompt}`;
+    body = `**Context switch:** you are now in the architecture-map playground — a planning session, not a coding session. The map is at \`${location.pathname}\`. Discuss the feedback below conversationally. Do NOT edit the HTML or the layouts JSON until I explicitly say to update. Never write or modify project code, and never begin implementing anything discussed here — implementation happens later, in a separate session. The final tasks of this session are committing the finalized map and uploading it to Jira; nothing beyond that. When discussion on a node wraps, ask whether to update the document.\n\n---\n\n${prompt}`;
     sessionStorage.setItem(preambleKey, '1');
   }
+  // Standing guard on every send: the preamble above is one-shot per browser
+  // session, but the PTY child can be re-forked underneath a long-lived tab —
+  // the fresh child would otherwise never see the planning-only rule.
+  body += '\n---\nReminder: planning only. Do not write or modify project code in this session; the final tasks are committing the map and uploading it to Jira.\n';
   const encoder = new TextEncoder();
   __claudeWS.send(encoder.encode(body + '\n'));
   btn.textContent = 'Sent';

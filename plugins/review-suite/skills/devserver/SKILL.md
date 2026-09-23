@@ -28,15 +28,18 @@ If you want to *generate* a new playground, use `/plan-review`, `/design-review`
 
 Project-scoped discovery is implemented inside the devserver binary itself. The skill is a one-line invocation; all logic lives in `bin/devserver.py find-or-start`.
 
-1. **Reuse via port-file fast path.** Checks `<project-root>/.plan-review/.devserver-port` for a saved port. If a listener on that port has `/proc/<pid>/cwd` resolving to this project root, reuse it.
+1. **Reuse via port-file fast path.** Checks `<project-root>/.plan-review/.devserver-port` for a saved port. If a listener on that port has `/proc/<pid>/cwd` resolving to this project root **and runs this plugin version's `devserver.py`**, reuse it. Devservers left over from an older plugin version are not reused; idle ones (no live playground) are stopped.
 2. **Reuse via process-pattern fallback, cwd-filtered.** If the port file is missing or stale, scan `pgrep -f "review-suite.*devserver\.py"` matches and pick the first whose `/proc/<pid>/cwd` matches this project root. Devservers running in **other** project roots are intentionally NOT reused — they serve the wrong static root and would attach the PTY bridge to the wrong transcript.
 3. **Otherwise start fresh.** Pick the first free port in 8765-8799 (or honor the explicit port arg), spawn `python3 bin/devserver.py <port>` in this project's cwd with `start_new_session=True`, then wait until the port begins listening.
 4. **Persist the port** to `<project-root>/.plan-review/.devserver-port`.
-5. **Print `URL=...`, `PORT=...`, `LAN_IP=...` to stdout** so the caller can `eval` the output. The URL uses the host's LAN IP so VS Code's port forwarder can hand it to the user's local browser.
+5. **Print `URL=...`, `PORT=...`, `LAN_IP=...` to stdout** so the caller can `eval` the output. The URL uses the host's LAN IP so VS Code's port forwarder can hand it to the user's local browser, and ends in `/_t/<token>/`: the per-project access token (stored in `.plan-review/.devserver-token`, mode 0600) that the server trades for an HttpOnly cookie on first open.
 
 The devserver supports:
 
-- `GET /` — static file serving (any path under the project root)
+Every request needs the access token — the server binds `0.0.0.0` so LAN devices can reach it, which also means anything routed to the host (e.g. a router port-forward) can. Without the token cookie every endpoint returns 403.
+
+- `GET /_t/<token>/<path>` — set the token cookie and redirect to `/<path>`
+- `GET /` — static file serving under the project root, except dot-directories/files other than the review output dirs (`.git`, `.claude`, `.env`, the devserver's own token/port files are never served)
 - `PUT /*-layouts.json` — atomic write of layouts JSON (used by architecture/map templates)
 - `WS /api/claude?session=<sid>` — PTY bridge spawning `claude --resume <sid>` (used by review playgrounds with their session ID baked into the HTML at authoring time)
 
@@ -50,7 +53,7 @@ When invoked:
 
 3. **Return URLs to the user.** Show:
    - Server root: `$URL`
-   - Tip: append the directory + filename, e.g. `${URL}.plan-review/TT-128-foo-review.html`
+   - Tip: append the directory + filename, e.g. `${URL}.plan-review/TT-128-foo-review.html` (never rebuild the URL from `$LAN_IP`/`$PORT` — that drops the token)
    - List any existing `.plan-review/*.html` files as clickable suggestions.
 
 4. **Mention** that the user can stop the server later with `kill $(lsof -t -i :$PORT)`.
@@ -74,6 +77,7 @@ echo "Devserver: $URL"
 |---|---|---|
 | `REVIEW_SUITE_HOST` | auto-detected LAN IP | Override host in printed URL |
 | `REVIEW_SUITE_PORT` | `8765` | Override default port |
+| `REVIEW_SUITE_IDLE_REAP_SECONDS` | `3600` | Stop a playground's `claude` child after this long with no browser attached (the next open resumes it) |
 
 These are honored by the devserver binary itself; the skill passes through any port arg as `argv[1]`.
 
