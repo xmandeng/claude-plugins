@@ -15,11 +15,7 @@ Serves the current working directory (project root; skills launch this without
 `cd`ing first so the PTY bridge spawns `claude --resume <sid>` in the same
 project the transcript was recorded under).
 
-Every request must carry the per-project access token (see "Access control"
-below); the find-or-start URL embeds it as a one-shot `/_t/<token>/` prefix.
-
 Endpoints:
-    GET  /_t/<token>/<path>           — set the auth cookie, redirect to /<path>
     GET  /                            — static file serving (SimpleHTTPRequestHandler)
     PUT  /*-layouts.json              — atomic write of layouts JSON, scoped to spawn cwd
     WS   /api/claude?session=<id>     — bridges browser xterm.js to `claude --resume <id>` PTY
@@ -29,12 +25,10 @@ import base64
 import fcntl
 import fnmatch
 import hashlib
-import hmac
 import json
 import os
 import pty
 import re
-import secrets
 import shlex
 import signal
 import socket
@@ -47,7 +41,6 @@ import time
 import uuid
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
 
 
@@ -249,26 +242,8 @@ def record_fork(cwd: str, playground_key: str, authoring_sid: str, fork_sid: str
 
 
 # =============================================================================
-# Access control -- the devserver binds 0.0.0.0 so the LAN URL works, which
-# also makes it reachable by anything that can route to the host (a router
-# port-forward exposes it to the internet). Every request must carry a random
-# per-project token: the find-or-start URL embeds it once as `/_t/<token>/`,
-# which trades it for an HttpOnly cookie. Dot-directories other than the review
-# output dirs are never served, so .git / .claude / .env stay private even to
-# token holders.
+# Devserver state -- port file, log and session registry under .plan-review/.
 # =============================================================================
-
-_TOKEN_PREFIX = "/_t/"
-_SERVABLE_DOT_DIRS = frozenset(
-    {
-        ".plan-review",
-        ".design-review",
-        ".architecture-map",
-        ".architecture-review",
-        ".code-diagrams",
-    }
-)
-
 
 _PRIVATE_FILES_GITIGNORE = "# review-suite devserver state -- never commit\n.devserver[-.]*\n.playground-sessions.*\n"
 
@@ -276,8 +251,8 @@ _PRIVATE_FILES_GITIGNORE = "# review-suite devserver state -- never commit\n.dev
 def ensure_state_dir(project_root: Path) -> Path:
     """Create `.plan-review/` with a .gitignore covering the devserver's own files.
 
-    Projects commit `.plan-review/` for the review HTML; the token, port file,
-    log and session registry that live beside it must not ride along.
+    Projects commit `.plan-review/` for the review HTML; the port file, log
+    and session registry that live beside it must not ride along.
     """
     state = project_root / ".plan-review"
     state.mkdir(parents=True, exist_ok=True)
@@ -290,41 +265,6 @@ def ensure_state_dir(project_root: Path) -> Path:
         with ignore.open("a") as fh:
             fh.write(("\n" if current and not current.endswith("\n") else "") + _PRIVATE_FILES_GITIGNORE)
     return state
-
-
-def _token_path(project_root: Path) -> Path:
-    return project_root / ".plan-review" / ".devserver-token"
-
-
-def load_or_create_token(project_root: Path) -> str:
-    """Return the project's devserver token, creating it (mode 0600) if absent."""
-    path = _token_path(project_root)
-    try:
-        existing = path.read_text().strip()
-    except OSError:
-        existing = ""
-    if existing:
-        return existing
-    ensure_state_dir(project_root)
-    token = secrets.token_urlsafe(24)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fh:
-        fh.write(token + "\n")
-    return token
-
-
-def is_servable_path(url_path: str) -> bool:
-    """False for any path through a dot-directory/file outside the review dirs."""
-    parts = [p for p in url_path.split("?", 1)[0].split("#", 1)[0].split("/") if p]
-    for i, part in enumerate(parts):
-        if not part.startswith("."):
-            continue
-        # Review output dirs are servable; their own dotfiles (token, port
-        # file, session registry, devserver log) are not.
-        if i == 0 and part in _SERVABLE_DOT_DIRS:
-            continue
-        return False
-    return True
 
 
 # =============================================================================
@@ -898,70 +838,8 @@ class DevHandler(SimpleHTTPRequestHandler):
     """Extends SimpleHTTPRequestHandler with a WebSocket endpoint for the PTY bridge."""
 
     spawn_cwd: str = os.getcwd()
-    token: str = ""
-
-    def _cookie_name(self) -> str:
-        # Cookies are shared across ports on one host; name per port so two
-        # project devservers on the same machine don't clobber each other.
-        port = self.server.server_address[1]  # type: ignore[index]
-        return f"review_suite_{port}"
-
-    def _authorized(self) -> bool:
-        if not self.token:
-            return False
-        cookie = SimpleCookie()
-        try:
-            cookie.load(self.headers.get("Cookie", ""))
-        except Exception:
-            return False
-        morsel = cookie.get(self._cookie_name())
-        return morsel is not None and hmac.compare_digest(morsel.value, self.token)
-
-    def _redeem_token_url(self) -> bool:
-        """Handle `/_t/<token>/<rest>`: set the cookie and redirect to `/<rest>`.
-
-        Returns True if the request was a token URL (handled either way).
-        """
-        if not self.path.startswith(_TOKEN_PREFIX):
-            return False
-        presented, _, rest = self.path[len(_TOKEN_PREFIX):].partition("/")
-        if not (self.token and hmac.compare_digest(presented, self.token)):
-            self.send_error(403, "Invalid access token")
-            return True
-        self.send_response(302)
-        self.send_header("Location", "/" + rest)
-        self.send_header(
-            "Set-Cookie",
-            f"{self._cookie_name()}={self.token}; Path=/; HttpOnly; SameSite=Strict",
-        )
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-        return True
-
-    def _gate(self) -> bool:
-        """Common auth + path policy. Returns True if the request may proceed."""
-        if not self._authorized():
-            self.send_error(
-                403,
-                "Access token required",
-                "Open this page through the URL printed by /devserver (or the review "
-                "skill) -- it carries this devserver's access token.",
-            )
-            return False
-        if not is_servable_path(urlparse(self.path).path):
-            self.send_error(404, "File not found")
-            return False
-        return True
-
-    def do_HEAD(self) -> None:
-        if self._gate():
-            super().do_HEAD()
 
     def do_GET(self) -> None:
-        if self._redeem_token_url():
-            return
-        if not self._gate():
-            return
         parsed = urlparse(self.path)
         if parsed.path == "/api/claude" and (
             self.headers.get("Upgrade", "").lower() == "websocket"
@@ -1019,8 +897,6 @@ class DevHandler(SimpleHTTPRequestHandler):
         spawn cwd are accepted. Everything else is a 403. Body must be JSON and
         within `LAYOUTS_MAX_BYTES`. Writes atomically via tmp + rename.
         """
-        if not self._gate():
-            return
         parsed = urlparse(self.path)
         target = resolve_safe_layouts_target(parsed.path, self.spawn_cwd)
         if target is None:
@@ -1061,6 +937,18 @@ class DevHandler(SimpleHTTPRequestHandler):
             return
         self.send_response(204)
         self.end_headers()
+
+    def do_OPTIONS(self) -> None:
+        """Handle CORS preflight."""
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, PUT, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+    def end_headers(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        super().end_headers()
 
     def log_message(self, format: str, *args: object) -> None:
         # Quieter logging — skip 200/304 GETs
@@ -1351,10 +1239,8 @@ def read_port_file(project_root: Path) -> int | None:
 
 
 def devserver_url(lan_ip: str, port: int, project_root: Path) -> str:
-    """Base URL for the user: `${URL}<dir>/<file>.html` must stay valid, so the
-    token rides as a path prefix that the server trades for a cookie."""
-    token = load_or_create_token(project_root)
-    return f"http://{lan_ip}:{port}{_TOKEN_PREFIX}{token}/"
+    """Base URL for the user: `${URL}<dir>/<file>.html` must stay valid."""
+    return f"http://{lan_ip}:{port}/"
 
 
 def emit_kv(url: str, port: int, lan_ip: str) -> None:
@@ -1410,7 +1296,6 @@ def find_or_start(port_arg: int | None) -> int:
 
     # Step 3: spawn fresh (clearing out idle servers from an older version).
     retire_stale_devservers(project_root)
-    load_or_create_token(project_root)  # before the child starts, so both agree
     try:
         port = pick_free_port(port_arg)
     except RuntimeError as exc:
@@ -1470,7 +1355,6 @@ def main() -> None:
     # devserver from the user's project root (no `cd` first), so this is
     # naturally the right place for `claude --resume <sid>` to find the transcript.
     DevHandler.spawn_cwd = os.getcwd()
-    DevHandler.token = load_or_create_token(Path(DevHandler.spawn_cwd))
     threading.Thread(
         target=_exit_when_project_removed,
         args=(DevHandler.spawn_cwd,),

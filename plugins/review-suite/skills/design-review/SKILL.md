@@ -26,7 +26,7 @@ A two-arg form (`/design-review <id> <title>`) is **not** supported — keep the
 4. Set the page title, heading, and JS constants (`PLAN_NAME`, `CLAUDE_SESSION`, `LAYOUTS_FILE`).
 5. Write the output HTML to the resolved output directory.
 6. Start (or reuse) the bundled devserver via `${CLAUDE_PLUGIN_ROOT}/bin/devserver.py find-or-start` — project-scoped: one devserver per project root on a free port in 8765-8799.
-7. Return the tokenized LAN-IP URL (`${URL}<dir>/<file>.html`).
+7. Return the LAN-IP URL (`${URL}<dir>/<file>.html`).
 
 On **Resume** the flow short-circuits: hydrate the prior node/edge arrays into the agent's context, rewrite only the `CLAUDE_SESSION` constant in the existing HTML, then jump to step 6.
 
@@ -149,7 +149,7 @@ If the generator is unavailable (no `python3`, restricted environment, etc.), do
    # $URL, $PORT, $LAN_IP are now set
    ```
 
-10. **Return the URL.** Format: `${URL}<output-dir-relative-to-cwd>/<filename>.html` (e.g., `${URL}.design-review/TT-131-foo-design-review.html`). `$URL` ends in `/_t/<token>/` — the devserver's access token, traded for a cookie on first open. Always build the link from `$URL`; a URL assembled from `$LAN_IP` and `$PORT` is rejected with 403.
+10. **Return the URL.** Format: `${URL}<output-dir-relative-to-cwd>/<filename>.html` (e.g., `${URL}.design-review/TT-131-foo-design-review.html`).
 
 ## Resume: Hydrate and Refresh
 
