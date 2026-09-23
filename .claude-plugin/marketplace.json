@@ -13,6 +13,13 @@
       "category": "productivity",
       "source": "./plugins/review-suite",
       "homepage": "https://github.com/xmandeng/claude-plugins/tree/main/plugins/review-suite"
+    },
+    {
+      "name": "textbook",
+      "description": "Typeset technical content as a polished PDF engineering reference, sized to read at full size on a reMarkable or iPad without zooming.",
+      "category": "productivity",
+      "source": "./plugins/textbook",
+      "homepage": "https://github.com/xmandeng/claude-plugins/tree/main/plugins/textbook"
     }
   ]
 }

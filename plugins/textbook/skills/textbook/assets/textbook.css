@@ -1,0 +1,235 @@
+/* ============================================================
+   Textbook / engineering-reference stylesheet for WeasyPrint.
+   House style: title page, contents, numbered sections, navy-header
+   tables, steel-bordered quote callouts, dark code blocks, and
+   inline SVG diagrams. Keep diagrams as inline SVG (styled with
+   inline attributes), never ASCII art or HTML/CSS box stacks.
+
+   Page size targets tablets and e-ink readers. The page is
+   158 x 210 mm, the 4:3 screen of a reMarkable 2 (a reMarkable
+   Paper Pro and a 13" iPad are also 4:3, and an 11" iPad fits it
+   by width). A device shows the page at roughly its printed size,
+   so the pt sizes below are the sizes the reader sees: no zooming
+   and no pinching. Margins are narrow because the device bezel
+   already frames the page.
+
+   For paper, override the page in the document's <head>:
+     <style>@page { size: A4; margin: 2cm; }</style>
+   ============================================================ */
+
+@page {
+  size: 158mm 210mm;
+  margin: 11mm 10mm 13mm 10mm;
+  @bottom-center {
+    content: counter(page);
+    font-family: 'Nimbus Sans', 'Liberation Sans', sans-serif;
+    font-size: 8.5pt;
+    color: #555;
+    padding-bottom: 3mm;
+  }
+}
+@page title { margin: 0; @bottom-center { content: none; } }
+
+:root {
+  --navy: #1f3756;
+  --navy-deep: #16273d;
+  --gold: #bd8b1c;      /* sparse accent: title-page rules only */
+  --steel: #46647f;     /* calm structural accent: kickers, section/TOC numbers, quote border */
+  --ink: #1c1c1c;
+  --muted: #5b6470;
+  --rule: #c9ced6;
+  --green: #2f6b3f;
+}
+
+html { font-size: 12pt; }
+body {
+  font-family: 'Nimbus Roman', 'Liberation Serif', 'DejaVu Serif', serif;
+  font-size: 11.5pt;
+  color: var(--ink);
+  line-height: 1.4;
+  text-align: justify;
+  hyphens: auto;
+}
+
+/* ---------- Title page ---------- */
+.title-page {
+  page: title;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 0 1.4cm;
+  page-break-after: always;
+}
+.eyebrow {
+  font-family: 'Nimbus Sans', 'Liberation Sans', sans-serif;
+  letter-spacing: 0.12em;
+  font-size: 11.5pt;
+  color: var(--navy);
+  text-transform: uppercase;
+  margin-bottom: 0.4cm;
+}
+.rule-gold { width: 3.2cm; height: 2.5px; background: var(--gold); margin: 0.45cm auto; }
+.doc-title {
+  font-family: 'Nimbus Sans', 'Liberation Sans', sans-serif;
+  font-size: 27pt; font-weight: 700; color: var(--navy-deep);
+  margin: 0.25cm 0; line-height: 1.1;
+}
+.doc-subtitle {
+  font-family: 'Nimbus Sans', 'Liberation Sans', sans-serif;
+  font-size: 13.5pt; color: var(--navy); font-weight: 400;
+  margin: 0.1cm 0 0.2cm;
+}
+.abstract { font-size: 11pt; color: var(--muted); max-width: 11.5cm; margin: 0.4cm auto 0; text-align: justify; }
+.title-footer {
+  position: absolute; bottom: 1.6cm; left: 0; right: 0; text-align: center;
+  font-family: 'Nimbus Sans', 'Liberation Sans', sans-serif;
+  font-size: 9.5pt; color: var(--muted); line-height: 1.5;
+}
+.title-footer code { font-family: 'Liberation Mono','Nimbus Mono PS',monospace; font-size: 9pt; }
+
+/* ---------- Contents ---------- */
+.contents-page { page-break-after: always; }
+h1.contents-h {
+  font-family: 'Nimbus Sans', 'Liberation Sans', sans-serif;
+  font-size: 18pt; color: var(--navy-deep); font-weight: 700; margin: 0 0 0.45cm;
+}
+.toc { font-family: 'Nimbus Sans', 'Liberation Sans', sans-serif; }
+.toc .l1 { font-size: 12.5pt; color: var(--navy-deep); margin: 0.26cm 0 0.06cm; font-weight: 600; }
+.toc .l2 { font-size: 11pt; color: var(--muted); margin: 0.06cm 0 0.06cm 0.9cm; }
+.toc .num { color: var(--steel); font-weight: 700; display: inline-block; min-width: 0.9cm; }
+/* Contents entries are links (href="#section-id"): tap to jump on a tablet.
+   The renderer fills in the dot leader and the target's page number. */
+.toc a { color: inherit; text-decoration: none; }
+.toc a::after { content: leader('.') target-counter(attr(href), page); color: var(--muted); font-weight: 400; }
+
+/* ---------- Section headings ---------- */
+h2.section {
+  font-family: 'Nimbus Sans', 'Liberation Sans', sans-serif;
+  font-size: 17pt; color: var(--navy-deep); font-weight: 700;
+  border-bottom: 2px solid var(--navy); padding-bottom: 0.1cm; margin: 0 0 0.35cm;
+  page-break-after: avoid;
+}
+h2.section .snum { color: var(--steel); margin-right: 0.15em; }
+h3.sub {
+  font-family: 'Nimbus Sans', 'Liberation Sans', sans-serif;
+  font-size: 13.5pt; color: var(--navy); font-weight: 700; margin: 0.42cm 0 0.14cm;
+  page-break-after: avoid;
+}
+.new-page { page-break-before: always; }
+
+p { margin: 0.22cm 0; orphans: 2; widows: 2; }
+strong { color: var(--navy-deep); }
+em { color: #333; }
+code, .mono { font-family: 'Liberation Mono','Nimbus Mono PS',monospace; font-size: 10pt; }
+p code, li code, td code { background: #eef1f5; padding: 0 2px; border-radius: 2px; color: #243b57; }
+ul, ol { margin: 0.18cm 0 0.22cm; padding-left: 0.65cm; }
+li { margin: 0.08cm 0; }
+
+/* ---------- Tables ---------- */
+table.data { width: 100%; border-collapse: collapse; margin: 0.3cm 0; font-size: 10.5pt; line-height: 1.3; text-align: left; hyphens: manual; }
+table.data th {
+  background: #314f70; color: #fff; text-align: left;
+  font-family: 'Nimbus Sans','Liberation Sans',sans-serif; font-weight: 600;
+  padding: 4px 6px; border: 1px solid #314f70;
+}
+table.data td { padding: 4px 6px; border: 1px solid var(--rule); vertical-align: top; }
+table.data thead { display: table-header-group; }  /* repeat the header on each page */
+table.data tr { break-inside: avoid; }
+table.data tr:nth-child(even) td { background: #f6f8fa; }
+
+/* ---------- Callouts ---------- */
+.quote { background: #f3f6f9; border-left: 4px solid var(--steel); padding: 0.24cm 0.38cm; margin: 0.32cm 0; }
+.quote .q { color: var(--green); font-style: italic; font-size: 12pt; }
+.quote .attr { font-family:'Liberation Mono','Nimbus Mono PS',monospace; font-size: 9pt; color: var(--muted); margin-top: 0.12cm; }
+
+.codeblock {
+  background: #1d2a3a; color: #e6edf3; border-radius: 4px; padding: 0.28cm 0.38cm; margin: 0.32cm 0;
+  font-family: 'Liberation Mono','Nimbus Mono PS',monospace; font-size: 9.5pt; line-height: 1.4;
+  text-align: left; hyphens: manual;
+  /* pre-wrap (not pre) so a long code line wraps inside the box instead of
+     clipping off the right edge; keep lines short enough to avoid ugly wraps */
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.codeblock .cm { color: #8aa0b6; }
+.codeblock .kw { color: #d7a96b; }
+
+.note { background: #eef3f9; border: 1px solid #c4d4e6; border-radius: 5px; padding: 0.22cm 0.38cm; margin: 0.3cm 0; font-size: 10.5pt; }
+.note .lbl { font-family:'Nimbus Sans','Liberation Sans',sans-serif; font-weight:700; color: var(--navy); }
+
+.caption { text-align: center; font-size: 10pt; color: var(--navy); font-style: italic; margin: 0.1cm 0 0.35cm; }
+
+/* ---------- Diagrams (inline SVG) ---------- */
+.diagram { display: block; width: 100%; margin: 0.32cm auto 0.1cm; break-inside: avoid; }
+
+/* ============================================================
+   Document components (optional building blocks)
+   Use these for richer references; see template.html for markup.
+   ============================================================ */
+
+/* Phase / kicker overline above a section header. Steel, uppercase,
+   and pinned to the heading beneath it so a page break never strands it. */
+.pipe-label {
+  font-family: 'Nimbus Sans','Liberation Sans',sans-serif;
+  font-size: 9pt; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--steel); font-weight: 700; margin: 0.5cm 0 0;
+  break-after: avoid; page-break-after: avoid;
+}
+
+/* Green "research paper" / cited-source callout. */
+.paper { background: #eef7f0; border: 1px solid #bcd9c4; border-left: 4px solid var(--green);
+  border-radius: 5px; padding: 0.24cm 0.38cm; margin: 0.32cm 0; }
+.paper .tag { font-family: 'Nimbus Sans','Liberation Sans',sans-serif; font-size: 8.5pt;
+  letter-spacing: 0.13em; font-weight: 700; color: var(--green); }
+.paper .ttl { font-weight: 700; color: var(--navy-deep); margin-top: 0.14cm; }
+.paper .cite { font-size: 10.5pt; margin-top: 0.04cm; }
+.paper .src { font-size: 9.5pt; color: var(--muted); }
+.paper p { font-size: 10.5pt; margin: 0.16cm 0 0; text-align: justify; }
+
+/* Labelled callout with a small uppercase header: blue default, red ".warn". */
+.callout { background: #eef3f9; border: 1px solid #c4d4e6; border-left: 4px solid var(--navy);
+  border-radius: 5px; padding: 0.22cm 0.38cm; margin: 0.3cm 0; font-size: 10.5pt; }
+.callout .hd { font-family: 'Nimbus Sans','Liberation Sans',sans-serif; font-size: 8.5pt;
+  letter-spacing: 0.1em; font-weight: 700; color: var(--navy); margin-bottom: 0.14cm; }
+.callout p { margin: 0.16cm 0 0; text-align: justify; }
+.callout p:first-of-type { margin-top: 0; }
+.callout.warn { background: #fcf0f0; border-color: #e6c4c4; border-left-color: #b03a3a; }
+.callout.warn .hd { color: #b03a3a; }
+
+/* Row of small "tag" pills (e.g. a list of issues a step fixes). */
+.pillrow { margin: 0.3cm 0; text-align: left; }
+.pill { display: inline-block; border: 1px solid #d8a6a6; background: #fcf2f2; border-radius: 14px;
+  padding: 2px 9px; margin: 2px 4px 2px 0; font-size: 9.5pt;
+  font-family: 'Nimbus Sans','Liberation Sans',sans-serif; }
+.pill b { color: #a23232; }
+
+/* Three-column "worked example" card: source | raw | corrected.
+   Columns are CSS table-cells so they balance and page cleanly. */
+.wcard { border: 1px solid #bcd9c4; border-radius: 6px; margin: 0.35cm 0; overflow: hidden; }
+.wcard .wtitle { background: #eef7f0; color: var(--navy-deep); font-weight: 700; font-size: 10.5pt;
+  font-family: 'Nimbus Sans','Liberation Sans',sans-serif; padding: 5px 10px; border-bottom: 1px solid #bcd9c4; }
+.wcard .wtitle .meta { color: var(--muted); font-weight: 400; }
+.wcols { display: table; width: 100%; table-layout: fixed; border-collapse: collapse; }
+.wcol { display: table-cell; width: 33.33%; vertical-align: top; border-right: 1px solid #d9e4dd; padding: 0; }
+.wcol:last-child { border-right: none; }
+.wcol .ch { font-family: 'Nimbus Sans','Liberation Sans',sans-serif; font-size: 8.5pt; font-weight: 700;
+  color: var(--green); letter-spacing: 0.04em; padding: 4px 7px; border-bottom: 1px solid #d9e4dd; }
+.wcol .cb { padding: 5px; }
+.wcol .cb img { width: 100%; border: 1px solid #ccc; }
+.wmd { font-family: 'Liberation Mono','Nimbus Mono PS',monospace; font-size: 8pt; line-height: 1.25;
+  color: #243b57; white-space: pre-wrap; word-break: break-word; }
+table.wtab { width: 100%; border-collapse: collapse; font-size: 8.5pt; font-family: 'Nimbus Sans','Liberation Sans',sans-serif; }
+table.wtab th { background: #dfeae2; color: var(--navy-deep); font-weight: 700; padding: 1px 3px;
+  border: 1px solid #cdddd3; text-align: center; line-height: 1.15; }
+table.wtab td { padding: 1px 3px; border: 1px solid #e2eae5; line-height: 1.15; }
+table.wtab td.lbl { background: #f2f7f4; font-weight: 600; }
+
+/* Embedded raster figure (e.g. a real screenshot); pair with a .caption. */
+img.render { display: block; max-width: 100%; margin: 0.32cm auto 0.1cm; border: 1px solid #d0d0d0; }
+img.render.full { width: 80%; }
+img.render.wide { width: 100%; }
+
+/* Wrapper for an inline-SVG lineage / timeline figure (see diagrams.html, Pattern D). */
+.lineage { display: block; width: 100%; margin: 0.32cm auto 0.15cm; break-inside: avoid; }
