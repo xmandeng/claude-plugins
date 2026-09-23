@@ -1,0 +1,21 @@
+{
+  "name": "textbook",
+  "version": "0.1.0",
+  "description": "Typeset technical content as a polished PDF engineering reference (title page, linked contents, numbered sections, styled tables and callouts, inline SVG diagrams), sized to read at full size on a reMarkable or iPad without zooming.",
+  "author": {
+    "name": "xmandeng",
+    "email": "mandeng@gmail.com"
+  },
+  "homepage": "https://github.com/xmandeng/claude-plugins/tree/main/plugins/textbook",
+  "repository": "https://github.com/xmandeng/claude-plugins",
+  "license": "MIT",
+  "keywords": [
+    "pdf",
+    "textbook",
+    "documentation",
+    "weasyprint",
+    "technical-writing",
+    "remarkable",
+    "ipad"
+  ]
+}
