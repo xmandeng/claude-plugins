@@ -15,7 +15,11 @@ Serves the current working directory (project root; skills launch this without
 `cd`ing first so the PTY bridge spawns `claude --resume <sid>` in the same
 project the transcript was recorded under).
 
+Every request must carry the per-project access token (see "Access control"
+below); the find-or-start URL embeds it as a one-shot `/_t/<token>/` prefix.
+
 Endpoints:
+    GET  /_t/<token>/<path>           — set the auth cookie, redirect to /<path>
     GET  /                            — static file serving (SimpleHTTPRequestHandler)
     PUT  /*-layouts.json              — atomic write of layouts JSON, scoped to spawn cwd
     WS   /api/claude?session=<id>     — bridges browser xterm.js to `claude --resume <id>` PTY
@@ -25,10 +29,12 @@ import base64
 import fcntl
 import fnmatch
 import hashlib
+import hmac
 import json
 import os
 import pty
 import re
+import secrets
 import shlex
 import signal
 import socket
@@ -41,6 +47,7 @@ import time
 import uuid
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
 
 
@@ -120,21 +127,204 @@ def resolve_safe_html_target(playground_rel_path: str, spawn_cwd: str) -> Path |
     return candidate
 
 
+def project_slug(cwd: str) -> str:
+    """Claude's per-project transcript directory name for ``cwd``.
+
+    Claude flattens every non-alphanumeric character of the absolute cwd to a
+    dash (``/home/u/repo/app_v2`` -> ``-home-u-repo-app-v2``).
+    """
+    return re.sub(r"[^a-zA-Z0-9]", "-", cwd)
+
+
+def _projects_root() -> Path:
+    return Path.home() / ".claude" / "projects"
+
+
 def transcript_exists(sid: str, cwd: str) -> bool:
     """True if ``claude --resume <sid>`` would find a transcript for this project.
 
     Claude records per-project transcripts at
     ``~/.claude/projects/<slug>/<sid>.jsonl``, where ``<slug>`` is the project
-    cwd with path separators and dots flattened to dashes. A forked session
-    that never received any input, or an archived / garbage id, has no such
-    file — resuming it dies with "No conversation found". The bridge checks
-    this first so it can fall back to a working session rather than hand the
-    user a dead terminal.
+    cwd flattened by ``project_slug``. A forked session that never received any
+    input, or an archived / garbage id, has no such file — resuming it dies
+    with "No conversation found". The bridge checks this first so it can fall
+    back to a working session rather than hand the user a dead terminal.
     """
     if not sid:
         return False
-    slug = re.sub(r"[/.]", "-", cwd)
-    return (Path.home() / ".claude" / "projects" / slug / f"{sid}.jsonl").is_file()
+    return (_projects_root() / project_slug(cwd) / f"{sid}.jsonl").is_file()
+
+
+def find_transcript(sid: str) -> Path | None:
+    """Locate ``<sid>.jsonl`` under ANY project directory, or None.
+
+    Session ids are uuids, so a match anywhere is the session. This is how the
+    bridge finds an authoring session recorded under a different cwd than the
+    devserver's -- the git-worktree case, where the session was started in the
+    main checkout and the playground is served from the worktree.
+    """
+    if not sid or "/" in sid or sid.startswith("."):
+        return None
+    for candidate in _projects_root().glob(f"*/{sid}.jsonl"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def ensure_resumable(sid: str, cwd: str) -> bool:
+    """Make ``claude --resume <sid>`` work from ``cwd``; False if impossible.
+
+    ``claude --resume`` only searches the transcript directory of its own cwd.
+    When the transcript lives under another project (session started in the
+    main checkout, devserver running in a worktree -- or vice versa), link it
+    into this project's directory. The link is read-only in practice: the
+    bridge always ``--fork-session``s from the authoring id, so the fork writes
+    its own transcript here and the original is never appended through it.
+    """
+    if transcript_exists(sid, cwd):
+        return True
+    src = find_transcript(sid)
+    if src is None:
+        return False
+    dest_dir = _projects_root() / project_slug(cwd)
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        (dest_dir / f"{sid}.jsonl").symlink_to(src.resolve())
+    except FileExistsError:
+        pass
+    except OSError:
+        return False
+    return transcript_exists(sid, cwd)
+
+
+# =============================================================================
+# Playground fork registry -- remembers the fork each playground last ran, so a
+# cold start (devserver restart, idle reap, worktree devserver respawn) resumes
+# that conversation instead of starting over from the plan as authored.
+# Stored at <spawn cwd>/.plan-review/.playground-sessions.json:
+#   {"<playground html rel path>": {"authoring": "<sid>", "fork": "<sid>"}}
+# =============================================================================
+
+_registry_lock = threading.Lock()
+
+
+def _registry_path(cwd: str) -> Path:
+    return Path(cwd) / ".plan-review" / ".playground-sessions.json"
+
+
+def _load_registry(cwd: str) -> dict[str, dict[str, str]]:
+    try:
+        data = json.loads(_registry_path(cwd).read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def recorded_fork(cwd: str, playground_key: str, authoring_sid: str) -> str | None:
+    """The fork last spawned for this playground from THIS authoring session.
+
+    A regenerated playground that bakes a different authoring id gets a fresh
+    fork -- the old conversation was about an older version of the document.
+    """
+    with _registry_lock:
+        entry = _load_registry(cwd).get(playground_key)
+    if not isinstance(entry, dict) or entry.get("authoring") != authoring_sid:
+        return None
+    fork = entry.get("fork")
+    return fork if isinstance(fork, str) and fork else None
+
+
+def record_fork(cwd: str, playground_key: str, authoring_sid: str, fork_sid: str) -> None:
+    path = _registry_path(cwd)
+    with _registry_lock:
+        data = _load_registry(cwd)
+        data[playground_key] = {"authoring": authoring_sid, "fork": fork_sid}
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, indent=2) + "\n")
+            os.replace(tmp, path)
+        except OSError:
+            pass
+
+
+# =============================================================================
+# Access control -- the devserver binds 0.0.0.0 so the LAN URL works, which
+# also makes it reachable by anything that can route to the host (a router
+# port-forward exposes it to the internet). Every request must carry a random
+# per-project token: the find-or-start URL embeds it once as `/_t/<token>/`,
+# which trades it for an HttpOnly cookie. Dot-directories other than the review
+# output dirs are never served, so .git / .claude / .env stay private even to
+# token holders.
+# =============================================================================
+
+_TOKEN_PREFIX = "/_t/"
+_SERVABLE_DOT_DIRS = frozenset(
+    {
+        ".plan-review",
+        ".design-review",
+        ".architecture-map",
+        ".architecture-review",
+        ".code-diagrams",
+    }
+)
+
+
+_PRIVATE_FILES_GITIGNORE = "# review-suite devserver state -- never commit\n.devserver[-.]*\n.playground-sessions.*\n"
+
+
+def ensure_state_dir(project_root: Path) -> Path:
+    """Create `.plan-review/` with a .gitignore covering the devserver's own files.
+
+    Projects commit `.plan-review/` for the review HTML; the token, port file,
+    log and session registry that live beside it must not ride along.
+    """
+    state = project_root / ".plan-review"
+    state.mkdir(parents=True, exist_ok=True)
+    ignore = state / ".gitignore"
+    try:
+        current = ignore.read_text()
+    except OSError:
+        current = ""
+    if ".devserver[-.]*" not in current:
+        with ignore.open("a") as fh:
+            fh.write(("\n" if current and not current.endswith("\n") else "") + _PRIVATE_FILES_GITIGNORE)
+    return state
+
+
+def _token_path(project_root: Path) -> Path:
+    return project_root / ".plan-review" / ".devserver-token"
+
+
+def load_or_create_token(project_root: Path) -> str:
+    """Return the project's devserver token, creating it (mode 0600) if absent."""
+    path = _token_path(project_root)
+    try:
+        existing = path.read_text().strip()
+    except OSError:
+        existing = ""
+    if existing:
+        return existing
+    ensure_state_dir(project_root)
+    token = secrets.token_urlsafe(24)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(token + "\n")
+    return token
+
+
+def is_servable_path(url_path: str) -> bool:
+    """False for any path through a dot-directory/file outside the review dirs."""
+    parts = [p for p in url_path.split("?", 1)[0].split("#", 1)[0].split("/") if p]
+    for i, part in enumerate(parts):
+        if not part.startswith("."):
+            continue
+        # Review output dirs are servable; their own dotfiles (token, port
+        # file, session registry, devserver log) are not.
+        if i == 0 and part in _SERVABLE_DOT_DIRS:
+            continue
+        return False
+    return True
 
 
 # =============================================================================
@@ -308,7 +498,9 @@ def _pty_spawn(argv, cwd, env, dimensions=(40, 120)):
 # running conversation.
 
 _SESSION_BUFFER_MAX = 256 * 1024      # replay buffer kept per session (bytes)
-_SESSION_IDLE_REAP_SECONDS = 3600     # reap a client-less session after this long
+# Reap a client-less session after this long. Reaping is not lossy: the next
+# open resumes the recorded fork (see recorded_fork) rather than starting over.
+_SESSION_IDLE_REAP_SECONDS = int(os.environ.get("REVIEW_SUITE_IDLE_REAP_SECONDS", "3600"))
 
 _sessions: dict[str, "PtySession"] = {}
 _sessions_lock = threading.Lock()
@@ -365,6 +557,12 @@ class PtySession:
             if _sessions.get(self.key) is self:
                 del _sessions[self.key]
         self.terminate()
+        # Tell the attached page the process is gone (so it stops auto-
+        # reconnecting) and close its socket, which otherwise idles open forever.
+        with self._lock:
+            ws, self._ws = self._ws, None
+        if ws is not None:
+            _notify_and_close(ws, {"type": "exited"})
 
     def attach(self, sock: socket.socket) -> None:
         """Bind a WebSocket, evict any prior one, and replay recent output.
@@ -383,10 +581,9 @@ class PtySession:
                     pass
             self._ws = sock
         if old is not None and old is not sock:
-            try:
-                old.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
+            # "evicted" tells the older tab not to auto-reconnect -- two tabs on
+            # one playground would otherwise steal the session back and forth.
+            _notify_and_close(old, {"type": "evicted"})
 
     def detach(self, sock: socket.socket) -> None:
         with self._lock:
@@ -424,6 +621,17 @@ class PtySession:
             pass
 
 
+def _notify_and_close(sock: socket.socket, msg: dict[str, str]) -> None:
+    try:
+        ws_send_frame(sock, OP_TEXT, json.dumps(msg).encode())
+    except OSError:
+        pass
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
+
+
 def _reap_idle_sessions() -> None:
     """Terminate sessions with no attached client past the idle TTL."""
     while True:
@@ -453,24 +661,29 @@ def _cold_start_spawn(
     sock: socket.socket,
     cwd: str,
     session_id: str,
+    playground_key: str | None = None,
 ) -> tuple[list[str], str, str] | None:
-    """Decide the argv for a brand-new playground process: always fork.
+    """Decide the argv for a brand-new playground process.
 
     The live child held in ``_sessions`` is what carries the conversation across
     browser reloads. A cold start -- first open, devserver restart, or a reaped
-    idle session -- re-forks from the authoring session to re-inherit the plan
-    context, rather than resuming whatever fork ran before it. Re-forking keeps a
-    cold start deterministic: it always begins from the plan as authored, not from
-    wherever a previous playground conversation happened to end up.
+    idle session -- first tries to resume the fork this playground ran last
+    (recorded per playground, and only if it was forked from the same authoring
+    session and its transcript is on disk). Otherwise it forks afresh from the
+    authoring session to inherit the plan context.
 
-    The authoring session is resumable (a normal, non-forked session flushes
-    incrementally), so we fork from it and only bail with an error frame if even
-    that has no transcript on disk.
+    The authoring transcript may live under another project directory (session
+    started in the main checkout, playground served from a worktree);
+    ``ensure_resumable`` links it into this project so the fork can find it.
 
     Returns ``(args, active_sid, spawn_mode)``, or ``None`` after sending an
     error frame.
     """
-    if not transcript_exists(session_id, cwd):
+    if playground_key is not None:
+        prior = recorded_fork(cwd, playground_key, session_id)
+        if prior and transcript_exists(prior, cwd):
+            return (["claude", "--resume", prior], prior, "resume")
+    if not ensure_resumable(session_id, cwd):
         try:
             ws_send_frame(
                 sock,
@@ -490,11 +703,39 @@ def _cold_start_spawn(
             pass
         return None
     new_sid = str(uuid.uuid4())
+    if playground_key is not None:
+        record_fork(cwd, playground_key, session_id, new_sid)
     return (
         ["claude", "--resume", session_id, "--fork-session", "--session-id", new_sid],
         new_sid,
         "fork",
     )
+
+
+# Session-scoped variables a `claude` process exports to its tool subprocesses.
+# The devserver inherits them when a skill launches it from a Bash tool call;
+# passed on, they tie the playground child to the (possibly long gone) authoring
+# process -- CLAUDE_CODE_CHILD_SESSION, for one, disables transcript writing.
+_INHERITED_SESSION_VARS = (
+    "CLAUDECODE",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_PID",
+    "AI_AGENT",
+)
+
+
+def child_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("TERM", "xterm-256color")
+    for name in _INHERITED_SESSION_VARS:
+        env.pop(name, None)
+    return env
 
 
 def _run_ws_input(sock: socket.socket, sess: "PtySession") -> None:
@@ -546,14 +787,18 @@ def bridge_ws_to_claude_pty(
     the next connection re-binds to the same process and replays the recent
     output buffer, so the conversation survives reloads unbroken. The child is
     forked from the authoring session only on the FIRST open (to inherit the
-    plan context); reloads never re-fork or `--resume`.
+    plan context), or on a later cold start resumed from the fork it ran
+    last; reloads never re-fork or `--resume`.
 
     Wire protocol:
       - BINARY frames in both directions carry raw PTY bytes (terminal I/O).
       - TEXT frames carry JSON control messages from the client. Currently
         only ``{"type":"resize","rows":N,"cols":N}`` is recognised.
       - Server sends one TEXT frame on connect with the active session info:
-        ``{"type":"active_session","sid":"<sid>","mode":"attach"|"fork"}``.
+        ``{"type":"active_session","sid":"<sid>","mode":"attach"|"resume"|"fork"}``.
+      - Server sends ``{"type":"evicted"}`` when another tab takes over the
+        playground, and ``{"type":"exited"}`` when the child process ends;
+        the page must not auto-reconnect after either.
 
     Unix-only (Windows would need `pywinpty`; out of scope).
     """
@@ -572,6 +817,11 @@ def bridge_ws_to_claude_pty(
         return
 
     key = str(playground_html) if playground_html is not None else f"session:{session_id}"
+    playground_key = (
+        str(playground_html.relative_to(Path(cwd).resolve()))
+        if playground_html is not None
+        else None
+    )
 
     with _sessions_lock:
         sess = _sessions.get(key)
@@ -582,21 +832,12 @@ def bridge_ws_to_claude_pty(
         if sess is None:
             # Cold start: no live process for this playground yet. Decide how to
             # spawn one, then keep it alive across reconnects.
-            spawn = _cold_start_spawn(sock, cwd, session_id)
+            spawn = _cold_start_spawn(sock, cwd, session_id, playground_key)
             if spawn is None:
                 return  # error frame already sent
             args, active_sid, spawn_mode = spawn
-            env = os.environ.copy()
-            env.setdefault("TERM", "xterm-256color")
-            # A claude process that sees CLAUDE_CODE_CHILD_SESSION in its
-            # environment disables transcript saving for itself and prints a
-            # banner saying so. The devserver inherits that marker whenever it
-            # was launched from inside a Claude Code tool call, and passing it
-            # down would leave the playground conversation unwritten to disk.
-            # Drop it so the child flushes a transcript like any other session.
-            env.pop("CLAUDE_CODE_CHILD_SESSION", None)
             try:
-                proc = _pty_spawn(args, cwd=cwd, env=env)
+                proc = _pty_spawn(args, cwd=cwd, env=child_env())
             except Exception as exc:
                 try:
                     ws_send_frame(
@@ -657,8 +898,70 @@ class DevHandler(SimpleHTTPRequestHandler):
     """Extends SimpleHTTPRequestHandler with a WebSocket endpoint for the PTY bridge."""
 
     spawn_cwd: str = os.getcwd()
+    token: str = ""
+
+    def _cookie_name(self) -> str:
+        # Cookies are shared across ports on one host; name per port so two
+        # project devservers on the same machine don't clobber each other.
+        port = self.server.server_address[1]  # type: ignore[index]
+        return f"review_suite_{port}"
+
+    def _authorized(self) -> bool:
+        if not self.token:
+            return False
+        cookie = SimpleCookie()
+        try:
+            cookie.load(self.headers.get("Cookie", ""))
+        except Exception:
+            return False
+        morsel = cookie.get(self._cookie_name())
+        return morsel is not None and hmac.compare_digest(morsel.value, self.token)
+
+    def _redeem_token_url(self) -> bool:
+        """Handle `/_t/<token>/<rest>`: set the cookie and redirect to `/<rest>`.
+
+        Returns True if the request was a token URL (handled either way).
+        """
+        if not self.path.startswith(_TOKEN_PREFIX):
+            return False
+        presented, _, rest = self.path[len(_TOKEN_PREFIX):].partition("/")
+        if not (self.token and hmac.compare_digest(presented, self.token)):
+            self.send_error(403, "Invalid access token")
+            return True
+        self.send_response(302)
+        self.send_header("Location", "/" + rest)
+        self.send_header(
+            "Set-Cookie",
+            f"{self._cookie_name()}={self.token}; Path=/; HttpOnly; SameSite=Strict",
+        )
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        return True
+
+    def _gate(self) -> bool:
+        """Common auth + path policy. Returns True if the request may proceed."""
+        if not self._authorized():
+            self.send_error(
+                403,
+                "Access token required",
+                "Open this page through the URL printed by /devserver (or the review "
+                "skill) -- it carries this devserver's access token.",
+            )
+            return False
+        if not is_servable_path(urlparse(self.path).path):
+            self.send_error(404, "File not found")
+            return False
+        return True
+
+    def do_HEAD(self) -> None:
+        if self._gate():
+            super().do_HEAD()
 
     def do_GET(self) -> None:
+        if self._redeem_token_url():
+            return
+        if not self._gate():
+            return
         parsed = urlparse(self.path)
         if parsed.path == "/api/claude" and (
             self.headers.get("Upgrade", "").lower() == "websocket"
@@ -686,6 +989,7 @@ class DevHandler(SimpleHTTPRequestHandler):
             hashlib.sha1((key + WS_GUID).encode()).digest()
         ).decode()
         self.close_connection = True
+        self.log_message("WS /api/claude session=%s playground=%s", session_id, playground_path)
         self.wfile.write(
             (
                 "HTTP/1.1 101 Switching Protocols\r\n"
@@ -715,6 +1019,8 @@ class DevHandler(SimpleHTTPRequestHandler):
         spawn cwd are accepted. Everything else is a 403. Body must be JSON and
         within `LAYOUTS_MAX_BYTES`. Writes atomically via tmp + rename.
         """
+        if not self._gate():
+            return
         parsed = urlparse(self.path)
         target = resolve_safe_layouts_target(parsed.path, self.spawn_cwd)
         if target is None:
@@ -755,18 +1061,6 @@ class DevHandler(SimpleHTTPRequestHandler):
             return
         self.send_response(204)
         self.end_headers()
-
-    def do_OPTIONS(self) -> None:
-        """Handle CORS preflight."""
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, PUT, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
-
-    def end_headers(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
-        super().end_headers()
 
     def log_message(self, format: str, *args: object) -> None:
         # Quieter logging — skip 200/304 GETs
@@ -820,11 +1114,47 @@ def pid_cwd(pid: int) -> Path | None:
         return None
 
 
+def pid_script(pid: int) -> Path | None:
+    """The devserver.py path `pid` is running, from /proc/<pid>/cmdline."""
+    try:
+        argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return None
+    for arg in argv:
+        if arg.endswith(b"devserver.py"):
+            return Path(os.fsdecode(arg)).resolve()
+    return None
+
+
+def is_current_version(pid: int) -> bool:
+    """True iff `pid` runs this very devserver.py (same installed plugin version).
+
+    A devserver started by an older plugin version keeps running its old code
+    after `/plugin update`; reusing it would silently skip every fix.
+    """
+    return pid_script(pid) == Path(__file__).resolve()
+
+
+def pid_has_children(pid: int) -> bool:
+    """True if `pid` has live child processes (i.e. playground `claude` PTYs)."""
+    try:
+        tasks = os.listdir(f"/proc/{pid}/task")
+    except OSError:
+        return False
+    for tid in tasks:
+        try:
+            if Path(f"/proc/{pid}/task/{tid}/children").read_text().strip():
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def devserver_on_port_matches_cwd(port: int, project_root: Path) -> bool:
-    """True iff any LISTEN-er on `port` has cwd resolving to `project_root`."""
+    """True iff a current-version LISTEN-er on `port` has cwd `project_root`."""
     for pid in lsof_listening_pids(port):
         cwd = pid_cwd(pid)
-        if cwd is not None and cwd == project_root:
+        if cwd is not None and cwd == project_root and is_current_version(pid):
             return True
     return False
 
@@ -924,12 +1254,30 @@ def find_review_suite_devserver_for_cwd(project_root: Path) -> int | None:
     """
     for pid in pgrep_review_suite_devservers():
         cwd = pid_cwd(pid)
-        if cwd is None or cwd != project_root:
+        if cwd is None or cwd != project_root or not is_current_version(pid):
             continue
         port = listening_port_for_pid(pid)
         if port is not None:
             return port
     return None
+
+
+def retire_stale_devservers(project_root: Path) -> None:
+    """Stop this project's old-version devservers that have no live playground.
+
+    One still holding a playground `claude` child is left alone -- killing it
+    would cut that conversation off; it exits on its own once idle-reaped
+    sessions leave it childless and the project dir goes away, or on reboot.
+    """
+    for pid in pgrep_review_suite_devservers():
+        if pid == os.getpid() or is_current_version(pid):
+            continue
+        if pid_cwd(pid) != project_root or pid_has_children(pid):
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
 
 
 def port_is_free(port: int) -> bool:
@@ -970,9 +1318,7 @@ def spawn_background_devserver(port: int, project_root: Path) -> subprocess.Pope
     base, and PTY-bridge spawn cwd. start_new_session detaches the child so
     it survives the find-or-start parent exit.
     """
-    log_dir = project_root / ".plan-review"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / ".devserver.log"
+    log_path = ensure_state_dir(project_root) / ".devserver.log"
     # Open in append mode so successive spawns accumulate. The log file is
     # not part of the public contract; it exists for human debugging.
     log_fh = log_path.open("ab")
@@ -988,9 +1334,7 @@ def spawn_background_devserver(port: int, project_root: Path) -> subprocess.Pope
 
 def write_port_file(project_root: Path, port: int) -> None:
     """Persist the active port under `<project_root>/.plan-review/.devserver-port`."""
-    port_dir = project_root / ".plan-review"
-    port_dir.mkdir(parents=True, exist_ok=True)
-    (port_dir / ".devserver-port").write_text(f"{port}\n")
+    (ensure_state_dir(project_root) / ".devserver-port").write_text(f"{port}\n")
 
 
 def read_port_file(project_root: Path) -> int | None:
@@ -1004,6 +1348,13 @@ def read_port_file(project_root: Path) -> int | None:
         return int(raw)
     except ValueError:
         return None
+
+
+def devserver_url(lan_ip: str, port: int, project_root: Path) -> str:
+    """Base URL for the user: `${URL}<dir>/<file>.html` must stay valid, so the
+    token rides as a path prefix that the server trades for a cookie."""
+    token = load_or_create_token(project_root)
+    return f"http://{lan_ip}:{port}{_TOKEN_PREFIX}{token}/"
 
 
 def emit_kv(url: str, port: int, lan_ip: str) -> None:
@@ -1026,7 +1377,7 @@ def find_or_start(port_arg: int | None) -> int:
 
     Order of operations:
       1. `<project_root>/.plan-review/.devserver-port` → verify the listener's
-         cwd matches project_root. Reuse if it does.
+         cwd matches project_root and it runs this plugin version. Reuse if so.
       2. If no port arg was given, scan `pgrep -f "review-suite.*devserver\\.py"`
          matches and reuse the first whose cwd matches project_root.
       3. Otherwise spawn a fresh devserver in project_root, write the port file,
@@ -1044,7 +1395,7 @@ def find_or_start(port_arg: int | None) -> int:
     saved = read_port_file(project_root)
     if saved is not None and devserver_on_port_matches_cwd(saved, project_root):
         if port_arg is None or port_arg == saved:
-            emit_kv(f"http://{lan_ip}:{saved}/", saved, lan_ip)
+            emit_kv(devserver_url(lan_ip, saved, project_root), saved, lan_ip)
             return 0
 
     # Step 2: pgrep fallback, scoped to this project's cwd. Skipped if the
@@ -1054,10 +1405,12 @@ def find_or_start(port_arg: int | None) -> int:
         found = find_review_suite_devserver_for_cwd(project_root)
         if found is not None:
             write_port_file(project_root, found)
-            emit_kv(f"http://{lan_ip}:{found}/", found, lan_ip)
+            emit_kv(devserver_url(lan_ip, found, project_root), found, lan_ip)
             return 0
 
-    # Step 3: spawn fresh.
+    # Step 3: spawn fresh (clearing out idle servers from an older version).
+    retire_stale_devservers(project_root)
+    load_or_create_token(project_root)  # before the child starts, so both agree
     try:
         port = pick_free_port(port_arg)
     except RuntimeError as exc:
@@ -1072,8 +1425,25 @@ def find_or_start(port_arg: int | None) -> int:
         )
         return 1
     write_port_file(project_root, port)
-    emit_kv(f"http://{lan_ip}:{port}/", port, lan_ip)
+    emit_kv(devserver_url(lan_ip, port, project_root), port, lan_ip)
     return 0
+
+
+def _exit_when_project_removed(project_dir: str, interval: float = 60.0) -> None:
+    """Shut down once the served directory is deleted (a removed git worktree).
+
+    Otherwise the devserver lingers forever on its port, serving nothing and
+    spawning `claude` children into a directory that no longer exists.
+    """
+    while True:
+        time.sleep(interval)
+        if not os.path.isdir(project_dir):
+            with _sessions_lock:
+                doomed = list(_sessions.values())
+                _sessions.clear()
+            for sess in doomed:
+                sess.terminate()
+            os._exit(0)
 
 
 def main() -> None:
@@ -1100,6 +1470,13 @@ def main() -> None:
     # devserver from the user's project root (no `cd` first), so this is
     # naturally the right place for `claude --resume <sid>` to find the transcript.
     DevHandler.spawn_cwd = os.getcwd()
+    DevHandler.token = load_or_create_token(Path(DevHandler.spawn_cwd))
+    threading.Thread(
+        target=_exit_when_project_removed,
+        args=(DevHandler.spawn_cwd,),
+        name="cwd-watch",
+        daemon=True,
+    ).start()
 
     class ReusableThreadingHTTPServer(ThreadingHTTPServer):
         allow_reuse_address = True

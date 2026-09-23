@@ -71,10 +71,7 @@ def _make_transcript(home: Path, cwd: str, sid: str) -> None:
     -- which we deliberately do NOT mock -- finds (or doesn't find) a genuine
     file on disk.
     """
-    import re
-
-    slug = re.sub(r"[/.]", "-", cwd)
-    d = home / ".claude" / "projects" / slug
+    d = home / ".claude" / "projects" / devserver.project_slug(cwd)
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{sid}.jsonl").write_text('{"type":"summary"}\n')
 

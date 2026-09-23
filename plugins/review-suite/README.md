@@ -43,7 +43,7 @@ review-suite/
 │   └── screenshots/
 └── tests/
     ├── conftest.py
-    └── test_devserver.py        # 54 tests: WS framing, LAN-IP, PUT handler
+    └── test_*.py                # devserver, sessions, worktrees, access control
 ```
 
 ### Devserver
@@ -51,9 +51,10 @@ review-suite/
 `bin/devserver.py` is a `SimpleHTTPRequestHandler` plus:
 
 - **PUT `/*-layouts.json`** — atomic write, scoped to spawn cwd, 256 KB cap, path-traversal-safe. Used by design-review / architecture-map templates to persist named layouts.
-- **WS `/api/claude?session=<sid>&playground=<rel-path>`** — bridges browser `xterm.js` to a local `claude` PTY. Each playground forks exactly once: on the first WS connect, the devserver spawns `claude --resume <authoring-sid> --fork-session` and writes the new fork's SID into the HTML's `ACTIVE_SESSION` JS constant via atomic in-place mutation. Every subsequent open reads `ACTIVE_SESSION` from the HTML and re-attaches to the same fork via `claude --resume <stored-sid>` — no new fork, no context loss across refreshes or "Send to Claude" clicks. Blank out `ACTIVE_SESSION` in the HTML to start fresh. The `playground` query param tells the devserver which HTML triggered the WS so it can read/write the constant; if absent (older rendered HTMLs without `ACTIVE_SESSION`), the devserver falls back to the pre-QUE-226 always-fork behavior for backward compat.
+- **Access token** — the server binds `0.0.0.0` (so LAN devices can open it), so every request must carry a per-project token: `find-or-start` prints `URL=http://<lan-ip>:<port>/_t/<token>/`, and the first hit trades the token for an HttpOnly cookie. Dot-directories other than the review output dirs (`.git`, `.claude`, `.env`, …) are never served. Do not port-forward the devserver to the internet.
+- **WS `/api/claude?session=<sid>&playground=<rel-path>`** — bridges browser `xterm.js` to a live `claude` PTY kept per playground across reloads and dropped connections (the page auto-reconnects). On a cold start (first open, devserver restart, idle reap) it resumes the fork that playground ran last, recorded in `.plan-review/.playground-sessions.json`, or forks afresh from the authoring session with `claude --resume <authoring-sid> --fork-session`. The authoring transcript is found under any `~/.claude/projects/` directory and linked into the devserver's project when needed, so playgrounds work from git worktrees.
 
-Default port: `8765`. Override with `REVIEW_SUITE_PORT`. Override LAN IP with `REVIEW_SUITE_HOST`.
+Default port: `8765`. Override with `REVIEW_SUITE_PORT`. Override LAN IP with `REVIEW_SUITE_HOST`. Idle `claude` children are stopped after `REVIEW_SUITE_IDLE_REAP_SECONDS` (default 3600) without a browser attached. A devserver exits on its own once its directory is deleted (a removed worktree), and one from an older plugin version is not reused after `/plugin update`.
 
 ### Hook
 
@@ -69,7 +70,7 @@ The first invocation of any skill that starts the devserver (`/plan-review`, `/d
 python3 -m pytest plugins/review-suite/tests/ -v
 ```
 
-54 tests cover the pure-logic surface of the devserver: WebSocket framing (RFC 6455), LAN-IP resolution, log filtering, the `resolve_safe_layouts_target` PUT-path validator, and the `DevHandler.do_PUT` end-to-end happy path and rejection cases (403/413/415/400). PTY/fork paths and the live HTTP server are integration concerns and aren't exercised in the unit suite.
+The suite covers WebSocket framing (RFC 6455), LAN-IP resolution, the PUT handler, project-scoped discovery, persistent PTY sessions, cold-start fork/resume decisions, worktree transcript resolution, and access control against a live HTTP server.
 
 ## Prerequisites
 

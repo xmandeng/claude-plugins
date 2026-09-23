@@ -1651,6 +1651,13 @@ def example_function(arg: str) -> bool:
         if (kind) status.classList.add(kind);
       }
 
+      // Auto-reconnect: the devserver keeps the claude process alive across
+      // dropped sockets (sleep, Wi-Fi, port-forwarder hiccups), so a lost
+      // connection just re-attaches. Not after the server says the session was
+      // taken by another tab, the process exited, or it sent a fatal error.
+      let reconnectDelay = 1000;
+      let noReconnect = false;
+      let everConnected = false;
       function connect() {
         if (!CLAUDE_SESSION || CLAUDE_SESSION === "SESSION_ID_HERE") {
           setStatus('error', 'error');
@@ -1677,6 +1684,11 @@ def example_function(arg: str) -> bool:
         __claudeWS = ws;
 
         ws.onopen = () => {
+          reconnectDelay = 1000;
+          // The server replays its scrollback buffer on attach; clear first so a
+          // reconnect repaints instead of duplicating the conversation.
+          if (everConnected) term.reset();
+          everConnected = true;
           __claudeReady = true;
           setStatus('connected', 'connected');
           sendBtn.disabled = false;
@@ -1695,6 +1707,17 @@ def example_function(arg: str) -> bool:
               // 'forked_session' is still accepted for backward compat.
               const isSessionMsg = msg && typeof msg.sid === 'string'
                 && (msg.type === 'active_session' || msg.type === 'forked_session');
+              if (msg && msg.type === 'evicted') {
+                noReconnect = true;
+                term.writeln('\r\n[devserver] this playground was opened in another tab. Reload to take it back.\r\n');
+                return;
+              }
+              if (msg && msg.type === 'exited') {
+                noReconnect = true;
+                term.writeln('\r\n[devserver] Claude exited. Reload the page to resume this conversation.\r\n');
+                return;
+              }
+              if (msg && msg.error) noReconnect = true;
               if (isSessionMsg) {
                 __forkedSid = msg.sid;
                 if (typeof msg.handoff === 'string' && msg.handoff) __handoffSid = msg.handoff;
@@ -1722,16 +1745,26 @@ def example_function(arg: str) -> bool:
           __claudeReady = false;
           sendBtn.disabled = true;
           setStatus('disconnected');
-          term.writeln('\r\n[devserver] session closed. refresh page to reconnect.\r\n');
+          onDataSub.dispose();
+          onResizeSub.dispose();
+          if (noReconnect) return;
+          if (!everConnected) {
+            term.writeln('\r\n[devserver] could not connect. Open this page via the URL the skill printed');
+            term.writeln('[devserver] (it carries the devserver access token), then reload.\r\n');
+            return;
+          }
+          setStatus('reconnecting…');
+          setTimeout(connect, reconnectDelay);
+          reconnectDelay = Math.min(reconnectDelay * 2, 15000);
         };
 
         const encoder = new TextEncoder();
-        term.onData((data) => {
+        const onDataSub = term.onData((data) => {
           if (ws.readyState !== WebSocket.OPEN) return;
           try { ws.send(encoder.encode(data)); } catch (e) { }
         });
 
-        term.onResize(({ cols, rows }) => {
+        const onResizeSub = term.onResize(({ cols, rows }) => {
           if (ws.readyState !== WebSocket.OPEN) return;
           try { ws.send(JSON.stringify({ type: 'resize', cols, rows })); } catch (e) { }
         });
@@ -1760,6 +1793,7 @@ def example_function(arg: str) -> bool:
             await navigator.clipboard.writeText(cmd);
             copied = true;
           } catch (e) { /* non-HTTPS or denied — fall through */ }
+          noReconnect = true;  // the terminal owns the session now
           if (__claudeWS && __claudeWS.readyState === WebSocket.OPEN) {
             try { __claudeWS.send(new Uint8Array([0x04])); } catch (e) { }
           }

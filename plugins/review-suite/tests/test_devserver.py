@@ -383,9 +383,12 @@ def build_put_handler(
     handler.client_address = ("127.0.0.1", 0)
     handler.requestline = f"PUT {request_path} HTTP/1.1"
     handler.server = MagicMock()
+    handler.server.server_address = ("0.0.0.0", 8765)
+    handler.token = "test-token"
     handler.headers = {
         "Content-Type": content_type,
         "Content-Length": content_length if content_length is not None else str(len(body)),
+        "Cookie": "review_suite_8765=test-token",
     }
     handler.spawn_cwd = str(tmp_path)
     handler.close_connection = False
@@ -457,7 +460,9 @@ class TestDoPutRejections:
     def test_path_traversal_returns_403(self, tmp_path):
         handler, _ = build_put_handler(tmp_path, "/../outside-layouts.json", b"{}")
         handler.do_PUT()
-        assert handler._status[0][0] == 403
+        # The dot-path gate (404) now rejects `..` before containment (403).
+        assert handler._status[0][0] in (403, 404)
+        assert not (tmp_path.parent / "outside-layouts.json").exists()
 
     def test_wrong_content_type_returns_415(self, tmp_path):
         handler, _ = build_put_handler(
@@ -544,6 +549,17 @@ class TestPidCwd:
     def test_returns_none_on_oserror(self):
         with patch("devserver.os.readlink", side_effect=OSError()):
             assert devserver.pid_cwd(1234) is None
+
+
+@pytest.fixture(autouse=True)
+def _treat_every_devserver_as_current_version():
+    """Discovery tests fake pids that don't run a real devserver.py; the version
+    gate (pid_script vs __file__) has its own tests in test_worktree_and_auth."""
+    with (
+        patch("devserver.is_current_version", return_value=True),
+        patch("devserver.retire_stale_devservers", return_value=None),
+    ):
+        yield
 
 
 class TestDevserverOnPortMatchesCwd:

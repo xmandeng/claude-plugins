@@ -26,7 +26,7 @@ A third form with both args explicit (`/plan-review <id> <title>`) is **not** su
 4. Set the page title, heading, and `PLAN_NAME` constant.
 5. Write the output HTML to the resolved output directory.
 6. Start (or reuse) the bundled devserver via `${CLAUDE_PLUGIN_ROOT}/bin/devserver.py find-or-start` — project-scoped: one devserver per project root on a free port in 8765-8799.
-7. Return the LAN-IP URL.
+7. Return the tokenized LAN-IP URL (`${URL}<dir>/<file>.html`).
 
 On **Resume** the flow short-circuits: hydrate the prior plan's `docSections` and `priorApprovals` into the agent's context, rewrite only the `CLAUDE_SESSION` constant in the existing HTML, then jump to step 6.
 
@@ -126,7 +126,7 @@ If the generator is unavailable (no `python3`, restricted environment, etc.), do
    # $URL, $PORT, $LAN_IP are now set
    ```
 
-10. **Return the URL.** Format: `http://<lan-ip>:$PORT/<output-dir-relative-to-cwd>/<filename>.html` (e.g., `http://192.168.1.237:8765/.plan-review/TT-128-foo-review.html`).
+10. **Return the URL.** Format: `${URL}<output-dir-relative-to-cwd>/<filename>.html` (e.g., `${URL}.plan-review/TT-128-foo-review.html`). `$URL` ends in `/_t/<token>/` — the devserver's access token, traded for a cookie on first open. Always build the link from `$URL`; a URL assembled from `$LAN_IP` and `$PORT` is rejected with 403.
 
 ## Resume: Hydrate and Refresh
 
@@ -182,9 +182,13 @@ Because the preamble is one-shot but the PTY child can be re-forked underneath a
 
 The devserver's PTY bridge forks a live `claude` child from `CLAUDE_SESSION` (the authoring session) on the first WebSocket connect, and keeps that child alive for the playground's lifetime, keyed by the HTML path. A browser refresh, "Send to Claude" click, or next-day return re-binds to the **same live process** and replays its recent output — context survives reloads without resuming anything from disk.
 
-The forked child writes its own transcript, so the conversation held in a playground stays recoverable from a terminal by the forked session id — that is the id the handoff button copies. The bridge itself does not resume it. If the live child is gone — devserver restarted, or the session reaped after a long idle — the next open **re-forks from `CLAUDE_SESSION`**, which restarts from the plan as authored rather than from wherever the playground conversation ended. The authoring session must itself be resumable; if its transcript is missing, the bridge surfaces an error asking you to regenerate the review from a live session. There is no `ACTIVE_SESSION` constant — the fork id changes on every cold start, so nothing is baked back into the HTML.
+The forked child writes its own transcript, so the conversation held in a playground stays recoverable from a terminal by the forked session id — that is the id the handoff button copies. If the live child is gone — devserver restarted, session reaped after `REVIEW_SUITE_IDLE_REAP_SECONDS` (default 3600) without a client, or Claude exited — the next open **resumes the fork this playground ran last**, recorded in `.plan-review/.playground-sessions.json`. It re-forks from `CLAUDE_SESSION` instead only when that fork has no transcript yet (no turn completed) or the HTML was regenerated from a different authoring session. Delete the playground's entry in that file to force a fresh fork. The authoring session must itself be resumable; if its transcript is missing everywhere, the bridge surfaces an error asking you to regenerate the review from a live session.
 
-A `claude` process that inherits the `CLAUDE_CODE_CHILD_SESSION` environment marker disables transcript saving for itself and prints a banner saying so. The devserver strips that marker before forking, so starting the devserver from inside a Claude Code tool call does not silently leave the playground conversation unwritten.
+**Git worktrees.** `claude --resume` only searches the transcript directory of its own cwd, and the devserver runs in the directory the skill was invoked from. When the authoring session was recorded under a different directory — started in the main checkout, playground generated from a worktree, or the reverse — the bridge finds the transcript under any project in `~/.claude/projects/` and symlinks it into the devserver's project before forking. A devserver whose directory is deleted (worktree removed) shuts itself down within a minute.
+
+**Reconnects.** The page auto-reconnects with backoff when the socket drops (sleep, network change, port-forwarder restart) and repaints from the server's scrollback. It stops reconnecting when another tab takes over the playground, when Claude exits, or after the handoff button releases the session.
+
+The devserver strips the session-scoped variables a parent `claude` exports to its tool subprocesses (`CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID`, …) before spawning the playground child. `CLAUDE_CODE_CHILD_SESSION`, for one, disables transcript saving, which would leave the playground conversation unwritten.
 
 ### Handoff
 
