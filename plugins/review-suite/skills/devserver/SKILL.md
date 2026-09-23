@@ -32,14 +32,11 @@ Project-scoped discovery is implemented inside the devserver binary itself. The 
 2. **Reuse via process-pattern fallback, cwd-filtered.** If the port file is missing or stale, scan `pgrep -f "review-suite.*devserver\.py"` matches and pick the first whose `/proc/<pid>/cwd` matches this project root. Devservers running in **other** project roots are intentionally NOT reused — they serve the wrong static root and would attach the PTY bridge to the wrong transcript.
 3. **Otherwise start fresh.** Pick the first free port in 8765-8799 (or honor the explicit port arg), spawn `python3 bin/devserver.py <port>` in this project's cwd with `start_new_session=True`, then wait until the port begins listening.
 4. **Persist the port** to `<project-root>/.plan-review/.devserver-port`.
-5. **Print `URL=...`, `PORT=...`, `LAN_IP=...` to stdout** so the caller can `eval` the output. The URL uses the host's LAN IP so VS Code's port forwarder can hand it to the user's local browser, and ends in `/_t/<token>/`: the per-project access token (stored in `.plan-review/.devserver-token`, mode 0600) that the server trades for an HttpOnly cookie on first open.
+5. **Print `URL=...`, `PORT=...`, `LAN_IP=...` to stdout** so the caller can `eval` the output. The URL uses the host's LAN IP so VS Code's port forwarder can hand it to the user's local browser.
 
 The devserver supports:
 
-Every request needs the access token — the server binds `0.0.0.0` so LAN devices can reach it, which also means anything routed to the host (e.g. a router port-forward) can. Without the token cookie every endpoint returns 403.
-
-- `GET /_t/<token>/<path>` — set the token cookie and redirect to `/<path>`
-- `GET /` — static file serving under the project root, except dot-directories/files other than the review output dirs (`.git`, `.claude`, `.env`, the devserver's own token/port files are never served)
+- `GET /` — static file serving (any path under the project root)
 - `PUT /*-layouts.json` — atomic write of layouts JSON (used by architecture/map templates)
 - `WS /api/claude?session=<sid>` — PTY bridge spawning `claude --resume <sid>` (used by review playgrounds with their session ID baked into the HTML at authoring time)
 
@@ -53,7 +50,7 @@ When invoked:
 
 3. **Return URLs to the user.** Show:
    - Server root: `$URL`
-   - Tip: append the directory + filename, e.g. `${URL}.plan-review/TT-128-foo-review.html` (never rebuild the URL from `$LAN_IP`/`$PORT` — that drops the token)
+   - Tip: append the directory + filename, e.g. `${URL}.plan-review/TT-128-foo-review.html`
    - List any existing `.plan-review/*.html` files as clickable suggestions.
 
 4. **Mention** that the user can stop the server later with `kill $(lsof -t -i :$PORT)`.

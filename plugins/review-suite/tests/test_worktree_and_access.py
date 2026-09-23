@@ -124,39 +124,15 @@ def test_pid_script_is_not_current_version_for_non_devserver() -> None:
     assert devserver.is_current_version(os.getpid()) is False
 
 
-@pytest.mark.parametrize(
-    ("path", "ok"),
-    [
-        ("/.plan-review/X-review.html", True),
-        ("/.architecture-map/a-layouts.json", True),
-        ("/docs/readme.md", True),
-        ("/", True),
-        ("/.plan-review/", True),
-        ("/.plan-review/.devserver-token", False),
-        ("/.plan-review/.playground-sessions.json", False),
-        ("/.claude/settings.local.json", False),
-        ("/.git/config", False),
-        ("/.env", False),
-        ("/src/.env", False),
-        ("/../etc/passwd", False),
-    ],
-)
-def test_is_servable_path(path: str, ok: bool) -> None:
-    assert devserver.is_servable_path(path) is ok
-
-
-class TestAccessControl:
+class TestOpenAccess:
     @pytest.fixture
     def server(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         (tmp_path / ".plan-review").mkdir()
         (tmp_path / ".plan-review" / "X-review.html").write_text("<html>ok</html>")
-        (tmp_path / ".claude").mkdir()
-        (tmp_path / ".claude" / "settings.local.json").write_text('{"secret":1}')
         monkeypatch.chdir(tmp_path)
 
         class Handler(devserver.DevHandler):
             spawn_cwd = str(tmp_path)
-            token = "tok123"
 
             def log_message(self, *a: object) -> None:
                 pass
@@ -167,58 +143,37 @@ class TestAccessControl:
         srv.shutdown()
 
     @staticmethod
-    def _req(port: int, method: str, path: str, cookie: str | None = None):
+    def _req(port: int, method: str, path: str):
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-        headers = {"Cookie": cookie} if cookie else {}
-        conn.request(method, path, headers=headers)
+        conn.request(method, path)
         resp = conn.getresponse()
         resp.read()
         conn.close()
         return resp
 
-    def test_no_token_is_forbidden(self, server: int) -> None:
-        assert self._req(server, "GET", "/.plan-review/X-review.html").status == 403
-        assert self._req(server, "HEAD", "/.plan-review/X-review.html").status == 403
-        assert self._req(server, "GET", "/").status == 403
+    def test_plain_urls_are_served(self, server: int) -> None:
+        assert self._req(server, "GET", "/.plan-review/X-review.html").status == 200
+        assert self._req(server, "HEAD", "/.plan-review/X-review.html").status == 200
+        assert self._req(server, "GET", "/.plan-review/").status == 200
+        assert self._req(server, "GET", "/").status == 200
 
-    def test_bad_token_url_is_forbidden(self, server: int) -> None:
-        assert self._req(server, "GET", "/_t/nope/.plan-review/X-review.html").status == 403
+    def test_wildcard_cors(self, server: int) -> None:
+        resp = self._req(server, "GET", "/.plan-review/X-review.html")
+        assert resp.getheader("Access-Control-Allow-Origin") == "*"
 
-    def test_token_url_sets_cookie_and_redirects(self, server: int) -> None:
-        resp = self._req(server, "GET", "/_t/tok123/.plan-review/X-review.html")
-        assert resp.status == 302
-        assert resp.getheader("Location") == "/.plan-review/X-review.html"
-        cookie = resp.getheader("Set-Cookie")
-        assert cookie and "HttpOnly" in cookie and f"review_suite_{server}=tok123" in cookie
-
-        ok = self._req(server, "GET", "/.plan-review/X-review.html", f"review_suite_{server}=tok123")
-        assert ok.status == 200
-
-    def test_secrets_stay_hidden_even_with_cookie(self, server: int) -> None:
-        c = f"review_suite_{server}=tok123"
-        assert self._req(server, "GET", "/.claude/settings.local.json", c).status == 404
-
-    def test_no_wildcard_cors(self, server: int) -> None:
-        resp = self._req(server, "GET", "/.plan-review/X-review.html", f"review_suite_{server}=tok123")
-        assert resp.getheader("Access-Control-Allow-Origin") is None
-
-    def test_token_file_is_private(self, tmp_path: Path) -> None:
-        tok = devserver.load_or_create_token(tmp_path)
-        assert tok == devserver.load_or_create_token(tmp_path)
-        mode = (tmp_path / ".plan-review" / ".devserver-token").stat().st_mode & 0o777
-        assert mode == 0o600
+    def test_find_or_start_url_has_no_token(self, tmp_path: Path) -> None:
+        assert devserver.devserver_url("10.0.0.5", 8765, tmp_path) == "http://10.0.0.5:8765/"
 
 
 def test_state_dir_gitignores_devserver_files(tmp_path: Path) -> None:
     import subprocess
 
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    devserver.load_or_create_token(tmp_path)
     devserver.write_port_file(tmp_path, 8765)
     devserver.ensure_state_dir(tmp_path)  # idempotent: no duplicate block
     state = tmp_path / ".plan-review"
     assert (state / ".gitignore").read_text().count(".devserver[-.]*") == 1
-    for name in (".devserver-token", ".devserver-port", ".devserver.log", ".playground-sessions.json"):
+    for name in (".devserver-port", ".devserver.log", ".playground-sessions.json"):
         r = subprocess.run(["git", "-C", str(tmp_path), "check-ignore", "-q", f".plan-review/{name}"])
         assert r.returncode == 0, name
     r = subprocess.run(["git", "-C", str(tmp_path), "check-ignore", "-q", ".plan-review/X-review.html"])

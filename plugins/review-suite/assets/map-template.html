@@ -2372,8 +2372,7 @@ function openTerminal() {
       onResizeSub.dispose();
       if (noReconnect) return;
       if (!everConnected) {
-        term.writeln('\r\n[devserver] could not connect. Open this page via the URL the skill printed');
-        term.writeln('[devserver] (it carries the devserver access token), then reload.\r\n');
+        term.writeln('\r\n[devserver] could not connect. Check the devserver is running, then reload.\r\n');
         return;
       }
       setStatus('reconnecting…');

@@ -384,11 +384,9 @@ def build_put_handler(
     handler.requestline = f"PUT {request_path} HTTP/1.1"
     handler.server = MagicMock()
     handler.server.server_address = ("0.0.0.0", 8765)
-    handler.token = "test-token"
     handler.headers = {
         "Content-Type": content_type,
         "Content-Length": content_length if content_length is not None else str(len(body)),
-        "Cookie": "review_suite_8765=test-token",
     }
     handler.spawn_cwd = str(tmp_path)
     handler.close_connection = False
@@ -460,8 +458,7 @@ class TestDoPutRejections:
     def test_path_traversal_returns_403(self, tmp_path):
         handler, _ = build_put_handler(tmp_path, "/../outside-layouts.json", b"{}")
         handler.do_PUT()
-        # The dot-path gate (404) now rejects `..` before containment (403).
-        assert handler._status[0][0] in (403, 404)
+        assert handler._status[0][0] == 403
         assert not (tmp_path.parent / "outside-layouts.json").exists()
 
     def test_wrong_content_type_returns_415(self, tmp_path):
