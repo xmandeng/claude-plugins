@@ -76,6 +76,17 @@ Starts (or reuses) the bundled devserver from your project root, so you can brow
 
 Turns technical content (a design, a plan, a subsystem explainer, a research report) into a typeset PDF engineering reference. It includes a title page, a linked contents page, numbered sections, navy-header tables, callouts, dark code blocks, and inline SVG diagrams. Claude writes the document as HTML against a fixed stylesheet and renders it with WeasyPrint in a throwaway `uv` environment. It then reads the rendered pages back to check them before delivering.
 
+<table>
+  <tr>
+    <td width="50%"><img src="./plugins/textbook/assets/screenshots/title-page.jpg" alt="Textbook title page: XBRL: A Primer"></td>
+    <td width="50%"><img src="./plugins/textbook/assets/screenshots/measurement-page.jpg" alt="Textbook body page with a numbered section, cited prose, and an inline SVG diagram"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Title page</sub></td>
+    <td align="center"><sub>Body page: numbered section, cited sources, inline SVG figure</sub></td>
+  </tr>
+</table>
+
 Pages are 158 x 210 mm, the 4:3 shape of a reMarkable 2 screen, which also suits a 13" iPad and fits an 11" iPad by width. The page shows at about its printed size, so the 11.5pt body text reads without zooming or pinching. Contents entries and PDF bookmarks jump to their section. One line in the document switches it to A4 for paper.
 
 Every draft goes through two subagent passes before rendering:

@@ -2,6 +2,17 @@
 
 Turns technical content (a design, a plan, a subsystem explainer, a research report) into a polished PDF engineering reference. Claude writes the document as HTML against a fixed stylesheet, renders it with WeasyPrint, and checks the rendered pages before handing over the PDF.
 
+<table>
+  <tr>
+    <td width="50%"><img src="./assets/screenshots/title-page.jpg" alt="Textbook title page: XBRL: A Primer"></td>
+    <td width="50%"><img src="./assets/screenshots/measurement-page.jpg" alt="Textbook body page with a numbered section, cited prose, and an inline SVG diagram"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Title page</sub></td>
+    <td align="center"><sub>Body page: numbered section, cited sources, inline SVG figure</sub></td>
+  </tr>
+</table>
+
 ## What you get
 
 - A title page, and a contents page whose entries are links with page numbers
