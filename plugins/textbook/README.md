@@ -4,8 +4,8 @@ Turns technical content (a design, a plan, a subsystem explainer, a research rep
 
 <table>
   <tr>
-    <td width="50%"><img src="./assets/screenshots/title-page.jpg" alt="Example title page"></td>
-    <td width="50%"><img src="./assets/screenshots/measurement-page.jpg" alt="Example body page"></td>
+    <td width="50%"><img src="./assets/screenshots/example-title-page.jpg" alt="Example title page"></td>
+    <td width="50%"><img src="./assets/screenshots/example-body-page.jpg" alt="Example body page"></td>
   </tr>
   <tr>
     <td align="center"><sub>Example title page</sub></td>
