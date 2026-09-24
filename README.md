@@ -78,12 +78,12 @@ Turns technical content (a design, a plan, a subsystem explainer, a research rep
 
 <table>
   <tr>
-    <td width="50%"><img src="./plugins/textbook/assets/screenshots/title-page.jpg" alt="Textbook title page: XBRL: A Primer"></td>
-    <td width="50%"><img src="./plugins/textbook/assets/screenshots/measurement-page.jpg" alt="Textbook body page with a numbered section, cited prose, and an inline SVG diagram"></td>
+    <td width="50%"><img src="./plugins/textbook/assets/screenshots/title-page.jpg" alt="Example title page"></td>
+    <td width="50%"><img src="./plugins/textbook/assets/screenshots/measurement-page.jpg" alt="Example body page"></td>
   </tr>
   <tr>
-    <td align="center"><sub>Title page</sub></td>
-    <td align="center"><sub>Body page: numbered section, cited sources, inline SVG figure</sub></td>
+    <td align="center"><sub>Example title page</sub></td>
+    <td align="center"><sub>Example body page</sub></td>
   </tr>
 </table>
 
