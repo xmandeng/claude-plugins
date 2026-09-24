@@ -5,7 +5,9 @@
 
 An observable, spec-driven agentic delivery workflow — **spec → design review → implementation** — built to reliably ship production code from agents. The premise: "AI slop" is a context-alignment problem, not a model limitation. Give the human a real review surface at each checkpoint and the agent keeps tracking reality.
 
-Every skill here runs the same pattern. You launch it from a local Claude Code terminal; it spins up a local HTTP server in the background and hands the active Claude session off into a browser page. You review, annotate, and send structured feedback back into the same running session — no copy-paste, no context drift, no fresh chat that forgot what you were doing.
+The review skills share one pattern. You launch a skill from a local Claude Code terminal. It starts a local HTTP server in the background and opens the active Claude session in a browser page. You review, annotate, and send structured feedback back into the same running session: no copy-paste, no context drift, no fresh chat that forgot what you were doing.
+
+When a design is settled, the `textbook` plugin typesets it as a PDF reference you can read on a tablet.
 
 ---
 
@@ -14,9 +16,15 @@ Every skill here runs the same pattern. You launch it from a local Claude Code t
 ```text
 /plugin marketplace add xmandeng/claude-plugins
 /plugin install review-suite@xmandeng-plugins
+/plugin install textbook@xmandeng-plugins
 ```
 
-That single install gives you all five skills below — sharing one devserver binary and one PTY bridge.
+| Plugin | What it gives you |
+|---|---|
+| [`review-suite`](#review-suite) | Five skills for interactive review playgrounds and diagrams, sharing one devserver and one PTY bridge |
+| [`textbook`](#textbook) | Polished PDF engineering references, sized for a reMarkable or iPad |
+
+To pick up new versions later, run `/plugin marketplace update xmandeng-plugins`, then `/plugin update <plugin>`.
 
 ---
 
@@ -64,9 +72,35 @@ Starts (or reuses) the bundled devserver from your project root, so you can brow
 
 ---
 
+## textbook
+
+Turns technical content (a design, a plan, a subsystem explainer, a research report) into a typeset PDF engineering reference. It includes a title page, a linked contents page, numbered sections, navy-header tables, callouts, dark code blocks, and inline SVG diagrams. Claude writes the document as HTML against a fixed stylesheet and renders it with WeasyPrint in a throwaway `uv` environment. It then reads the rendered pages back to check them before delivering.
+
+<table>
+  <tr>
+    <td width="50%"><img src="./plugins/textbook/assets/screenshots/example-title-page.jpg" alt="Example title page"></td>
+    <td width="50%"><img src="./plugins/textbook/assets/screenshots/example-body-page.jpg" alt="Example body page"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Example title page</sub></td>
+    <td align="center"><sub>Example body page</sub></td>
+  </tr>
+</table>
+
+Pages are 158 x 210 mm, the 4:3 shape of a reMarkable 2 screen, which also suits a 13" iPad and fits an 11" iPad by width. The page shows at about its printed size, so the 11.5pt body text reads without zooming or pinching. Contents entries and PDF bookmarks jump to their section. One line in the document switches it to A4 for paper.
+
+Every draft goes through two subagent passes before rendering:
+
+1. A rules editor enforces a plain, lead-with-the-point prose style and a list of banned words.
+2. A topic-blind reader flags every place a newcomer would stall.
+
+Ask for "a textbook" or "a PDF reference" of whatever you just designed. Requires `uv` and WeasyPrint's native libraries (pango, cairo, harfbuzz).
+
+---
+
 ## Docs
 
-Full per-skill documentation, the canonical devserver source, hooks, and tests live under [`plugins/review-suite/`](./plugins/review-suite/).
+Full documentation lives with each plugin: [`plugins/review-suite/`](./plugins/review-suite/) (per-skill docs, the devserver source, hooks, and tests) and [`plugins/textbook/`](./plugins/textbook/) (the skill, stylesheet, template, and diagram patterns).
 
 ---
 

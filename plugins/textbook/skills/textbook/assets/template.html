@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<!-- Keep textbook.css next to this file when rendering; WeasyPrint resolves
+     the href relative to the HTML's location. The page is tablet-sized
+     (158 x 210 mm). For paper, uncomment the override below. -->
+<!-- <style>@page { size: A4; margin: 2cm; }</style> -->
+<link rel="stylesheet" href="textbook.css">
+<title>REPLACE: Document Title</title>
+</head>
+<body>
+
+<!-- ===================== TITLE PAGE ===================== -->
+<section class="title-page">
+  <div class="eyebrow">REPLACE &mdash; Product or Series Eyebrow</div>
+  <div class="rule-gold"></div>
+  <div class="doc-title">REPLACE: Main Title</div>
+  <div class="doc-subtitle">REPLACE: One-line subtitle</div>
+  <div class="rule-gold"></div>
+  <p class="abstract">REPLACE: a 2-3 sentence abstract that states exactly what this
+  document covers and what it assumes the reader already knows.</p>
+  <div class="title-footer">
+    Engineering Reference &middot; Generated REPLACE_DATE<br>
+    Source of truth: <code>REPLACE/path/</code> &middot; REPLACE-TICKET
+  </div>
+</section>
+
+<!-- ===================== CONTENTS ===================== -->
+<section class="contents-page">
+  <h1 class="contents-h">Contents</h1>
+  <div class="toc">
+    <!-- Each entry links to its section's id. The stylesheet adds the dot
+         leader and page number, and the link lets a tablet reader tap to jump.
+         Keep numbers and ids in sync with the h2.section / h3.sub below. -->
+    <div class="l1"><a href="#s1"><span class="num">1</span>First Section</a></div>
+    <div class="l2"><a href="#s1-1"><span class="num">1.1</span>A Subsection</a></div>
+    <div class="l1"><a href="#s2"><span class="num">2</span>Components Gallery</a></div>
+  </div>
+
+  <h3 class="sub" style="margin-top:0.8cm">Audience and Scope</h3>
+  <p>REPLACE: who this is for and what prior knowledge is assumed.</p>
+</section>
+
+<!-- ===================== SECTION 1 ===================== -->
+<section class="new-page">
+  <h2 class="section" id="s1"><span class="snum">1</span> First Section</h2>
+  <p>Body paragraph. Use <code>inline code</code>, <strong>bold for emphasis</strong>,
+  and <em>italics</em> sparingly.</p>
+
+  <h3 class="sub" id="s1-1">1.1&nbsp;&nbsp;A Subsection</h3>
+  <p>Headers are clean labels; never fold inline code or a trailing sentence into a
+  bold header. If a label needs explanation, put the header on its own line and the
+  sentence beneath it.</p>
+
+  <!-- A styled data table -->
+  <table class="data">
+    <thead><tr><th style="width:30%">Column</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Item</strong></td><td>Explanation.</td></tr>
+    </tbody>
+  </table>
+
+  <!-- A quote callout for a guiding principle -->
+  <div class="quote">
+    <div class="q">A memorable one-sentence principle.</div>
+    <div class="attr">&mdash; attribution / source path</div>
+  </div>
+
+  <!-- A note callout -->
+  <div class="note"><span class="lbl">Known dependency.</span> A short caveat the reader
+  must know, stated plainly.</div>
+
+  <!-- A code block (use for real code/signatures, NOT for diagrams) -->
+  <div class="codeblock"><span class="kw">function_name</span>(arg: Type) -> ReturnType</div>
+
+  <!-- A figure: paste an inline SVG from diagrams.html, then a caption -->
+  <!-- <svg class="diagram" ...> ... </svg> -->
+  <!-- <p class="caption">Figure caption.</p> -->
+</section>
+
+<!-- ===================== SECTION 2 (component gallery) ===================== -->
+<section class="new-page">
+  <!-- Phase / kicker overline pinned above a section header. Use for a
+       running label like "PIPELINE - STAGE NAME"; it stays with the heading. -->
+  <div class="pipe-label">Series &middot; Phase Name</div>
+  <h2 class="section" id="s2"><span class="snum">2</span> Components Gallery</h2>
+
+  <p>A kicker overline sits above this heading. Below are the optional building
+  blocks defined in <code>textbook.css</code>.</p>
+
+  <!-- Green cited-source / "paper" callout -->
+  <div class="paper">
+    <div class="tag">SOURCE 1</div>
+    <div class="ttl">Title of a cited work or primary source</div>
+    <div class="cite">Authors &middot; <em>identifier</em> (year).</div>
+    <div class="src">Cited at <code>path/to/file.py:18&ndash;21</code>.</div>
+    <p>A short paragraph summarising the source and why it matters here.</p>
+  </div>
+
+  <!-- Labelled callout (blue default) -->
+  <div class="callout">
+    <div class="hd">WHY THIS MATTERS</div>
+    <p>A blue labelled callout for an aside the reader must not miss. The header
+    is a short uppercase label; the body is normal prose.</p>
+  </div>
+
+  <!-- Labelled callout (red ".warn" for open work / caveats) -->
+  <div class="callout warn">
+    <div class="hd">OPEN &middot; KNOWN GAP</div>
+    <p>The same callout with <code>class="callout warn"</code> for open issues,
+    risks, or gaps that are not yet resolved.</p>
+  </div>
+
+  <!-- Pill row: a set of small tags, e.g. the defects a step fixes -->
+  <div class="pillrow">
+    <span class="pill"><b>First issue</b> a short description</span>
+    <span class="pill"><b>Second issue</b> another description</span>
+    <span class="pill"><b>Third issue</b> one more</span>
+  </div>
+
+  <!-- Three-column worked-example card: source | raw | corrected -->
+  <div class="wcard">
+    <div class="wtitle">Figure &mdash; Worked example: Title <span class="meta">(metadata here)</span></div>
+    <div class="wcols">
+      <div class="wcol">
+        <div class="ch">1 &middot; SOURCE</div>
+        <div class="cb"><!-- <img src="thumb.png" alt="source"> --><div class="wmd">paste the
+source artifact here</div></div>
+      </div>
+      <div class="wcol">
+        <div class="ch">2 &middot; RAW / INTERMEDIATE</div>
+        <div class="cb"><div class="wmd">| raw | grid |
+| --- | --- |
+| as | text |</div></div>
+      </div>
+      <div class="wcol">
+        <div class="ch">3 &middot; CORRECTED</div>
+        <div class="cb"><table class="wtab">
+          <thead><tr><th></th><th>Col A</th><th>Col B</th></tr></thead>
+          <tbody><tr><td class="lbl">Row</td><td>1</td><td>2</td></tr></tbody>
+        </table></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Embedded raster figure (real screenshot) + caption -->
+  <!-- <img class="render full" src="screenshot.png" alt="..."> -->
+  <!-- <p class="caption">What the figure shows.</p> -->
+</section>
+
+</body>
+</html>
