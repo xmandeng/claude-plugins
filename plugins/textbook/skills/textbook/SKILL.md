@@ -12,7 +12,7 @@ reference. The house style has:
 - a centered title page with gold rules
 - a contents page whose entries are links, with page numbers
 - numbered sections with underlined headings
-- justified serif body text
+- left-aligned serif body text
 - navy-header tables, blue/red/green callouts, and dark code blocks
 - inline SVG diagrams
 
@@ -24,12 +24,11 @@ ephemeral `uv` environment so nothing is installed into the project.
 
 ## Page size
 
-The page is **158 x 210 mm**, the 4:3 shape of a reMarkable 2 screen. A
-reMarkable Paper Pro and a 13" iPad are also 4:3, and an 11" iPad fits the page
-by width. Each device shows the page at about its printed size, so the type sizes
-in `textbook.css` are what the reader sees: 11.5pt body text, with no zooming or
-pinching. The margins are narrow because the device bezel already frames the
-page.
+The page is **186 x 248 mm**, 4:3, about the size of a reMarkable Paper Pro
+screen, which shows it at nearly its printed size. A reMarkable 2 or an 11" iPad
+shows it about 15% smaller, and a 13" iPad about the same. The body is 11.5pt and
+code blocks 8pt, which read without zooming on all of them. The margins are 18 mm
+at the top and sides and 20 mm at the bottom, so the text has room around it.
 
 For a paper copy, add one line to the document's `<head>`:
 
@@ -358,8 +357,8 @@ reader holds unresolved ideas across branches before any of them lands.
   possible — a screenshot of the actual page with the confusion marked beats a
   described example. Define domain terms ("page decoration") in plain words at
   first use in the section that uses them; readers jump into sections cold.
-- **Type is sized for the device.** The page is tablet-sized and the body is
-  11.5pt, both set in `textbook.css`. Do not shrink type or widen the page
+- **Type is sized for the device.** The page is tablet-sized, the body is
+  11.5pt and code blocks 8pt, all set in `textbook.css`. Do not shrink type or widen the page
   with per-document overrides. If content does not fit, cut content, not point
   size. The only sanctioned override is the A4 `@page` line for paper copies.
 
@@ -418,9 +417,11 @@ for a mechanism, or one vague verb doing the work of six precise ones.
   Defined as CSS vars in `textbook.css`. Keep gold sparse - structural accents
   (numbers, kickers) are steel, so the palette reads as one calm navy/steel
   hierarchy rather than gold clashing against blue.
-- **Fit the narrow column.** The text column is 138 mm wide. Keep tables to four
+- **Fit the column.** The text column is 150 mm wide. Keep tables to four
   columns or fewer; split a wider table, or turn it into one table per entity.
   Code blocks wrap rather than clip (`white-space: pre-wrap`), but a code line
-  over about 65 characters wraps mid-token, so break long signatures by hand.
+  over about 80 characters wraps mid-token, so break long signatures by hand.
+  A code block never splits across pages, so a long listing reads better as
+  several short blocks.
 - **Verify before you assert.** Symbols, file paths, and any performance/behavior
   claim must be grounded in something you actually checked this session.

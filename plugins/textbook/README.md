@@ -16,14 +16,14 @@ Turns technical content (a design, a plan, a subsystem explainer, a research rep
 ## What you get
 
 - A title page, and a contents page whose entries are links with page numbers
-- Numbered sections, justified serif body text, navy-header tables
+- Numbered sections, left-aligned serif body text, navy-header tables
 - Callouts for notes, warnings, and cited sources, plus dark code blocks
 - Inline SVG diagrams from four patterns: pipeline, before/after, two-outcome branch, timeline
 - PDF bookmarks for every section
 
 ## Sized for tablets and e-readers
 
-Pages are 158 x 210 mm, the 4:3 shape of a reMarkable 2 screen. A reMarkable Paper Pro and a 13" iPad share that shape, and an 11" iPad fits it by width. The device shows the page at about its printed size, so the 11.5pt body text reads without zooming or pinching.
+Pages are 186 x 248 mm, 4:3, about the size of a reMarkable Paper Pro screen, which shows them at nearly their printed size. A reMarkable 2 or an 11" iPad shows them about 15% smaller, and a 13" iPad about the same. The 11.5pt body text and 8pt code read without zooming or pinching.
 
 For paper, add `<style>@page { size: A4; margin: 2cm; }</style>` to the document's `<head>`.
 

@@ -6,20 +6,20 @@
    inline attributes), never ASCII art or HTML/CSS box stacks.
 
    Page size targets tablets and e-ink readers. The page is
-   158 x 210 mm, the 4:3 screen of a reMarkable 2 (a reMarkable
-   Paper Pro and a 13" iPad are also 4:3, and an 11" iPad fits it
-   by width). A device shows the page at roughly its printed size,
-   so the pt sizes below are the sizes the reader sees: no zooming
-   and no pinching. Margins are narrow because the device bezel
-   already frames the page.
+   186 x 248 mm, 4:3, about the screen of a reMarkable Paper Pro,
+   which shows it at nearly its printed size. A reMarkable 2 or an
+   11" iPad shows it about 15% smaller, and a 13" iPad about the
+   same. The type below reads without zooming on all of them.
+   Margins leave room around the text rather than relying on the
+   device bezel.
 
    For paper, override the page in the document's <head>:
      <style>@page { size: A4; margin: 2cm; }</style>
    ============================================================ */
 
 @page {
-  size: 158mm 210mm;
-  margin: 11mm 10mm 13mm 10mm;
+  size: 186mm 248mm;
+  margin: 18mm 18mm 20mm 18mm;
   @bottom-center {
     content: counter(page);
     font-family: 'Nimbus Sans', 'Liberation Sans', sans-serif;
@@ -47,8 +47,10 @@ body {
   font-size: 11.5pt;
   color: var(--ink);
   line-height: 1.4;
-  text-align: justify;
-  hyphens: auto;
+  /* Left-aligned: justified text in a column this narrow opens uneven gaps
+     between words. No automatic hyphenation for the same reason. */
+  text-align: left;
+  hyphens: manual;
 }
 
 /* ---------- Title page ---------- */
@@ -82,7 +84,7 @@ body {
   font-size: 13.5pt; color: var(--navy); font-weight: 400;
   margin: 0.1cm 0 0.2cm;
 }
-.abstract { font-size: 11pt; color: var(--muted); max-width: 11.5cm; margin: 0.4cm auto 0; text-align: justify; }
+.abstract { font-size: 11pt; color: var(--muted); max-width: 11.5cm; margin: 0.4cm auto 0; }
 .title-footer {
   position: absolute; bottom: 1.6cm; left: 0; right: 0; text-align: center;
   font-family: 'Nimbus Sans', 'Liberation Sans', sans-serif;
@@ -146,9 +148,11 @@ table.data tr:nth-child(even) td { background: #f6f8fa; }
 .quote .attr { font-family:'Liberation Mono','Nimbus Mono PS',monospace; font-size: 9pt; color: var(--muted); margin-top: 0.12cm; }
 
 .codeblock {
-  background: #1d2a3a; color: #e6edf3; border-radius: 4px; padding: 0.28cm 0.38cm; margin: 0.32cm 0;
-  font-family: 'Liberation Mono','Nimbus Mono PS',monospace; font-size: 9.5pt; line-height: 1.4;
+  background: #1d2a3a; color: #e6edf3; border-radius: 4px; padding: 0.2cm 0.3cm; margin: 0.25cm 0;
+  font-family: 'Liberation Mono','Nimbus Mono PS',monospace; font-size: 8pt; line-height: 1.3;
   text-align: left; hyphens: manual;
+  /* A block stays on one page; a page break inside a short block reads badly. */
+  break-inside: avoid;
   /* pre-wrap (not pre) so a long code line wraps inside the box instead of
      clipping off the right edge; keep lines short enough to avoid ugly wraps */
   white-space: pre-wrap; overflow-wrap: anywhere;
@@ -186,14 +190,14 @@ table.data tr:nth-child(even) td { background: #f6f8fa; }
 .paper .ttl { font-weight: 700; color: var(--navy-deep); margin-top: 0.14cm; }
 .paper .cite { font-size: 10.5pt; margin-top: 0.04cm; }
 .paper .src { font-size: 9.5pt; color: var(--muted); }
-.paper p { font-size: 10.5pt; margin: 0.16cm 0 0; text-align: justify; }
+.paper p { font-size: 10.5pt; margin: 0.16cm 0 0; }
 
 /* Labelled callout with a small uppercase header: blue default, red ".warn". */
 .callout { background: #eef3f9; border: 1px solid #c4d4e6; border-left: 4px solid var(--navy);
   border-radius: 5px; padding: 0.22cm 0.38cm; margin: 0.3cm 0; font-size: 10.5pt; }
 .callout .hd { font-family: 'Nimbus Sans','Liberation Sans',sans-serif; font-size: 8.5pt;
   letter-spacing: 0.1em; font-weight: 700; color: var(--navy); margin-bottom: 0.14cm; }
-.callout p { margin: 0.16cm 0 0; text-align: justify; }
+.callout p { margin: 0.16cm 0 0; }
 .callout p:first-of-type { margin-top: 0; }
 .callout.warn { background: #fcf0f0; border-color: #e6c4c4; border-left-color: #b03a3a; }
 .callout.warn .hd { color: #b03a3a; }
