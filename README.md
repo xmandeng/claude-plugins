@@ -87,7 +87,7 @@ Turns technical content (a design, a plan, a subsystem explainer, a research rep
   </tr>
 </table>
 
-Pages are 158 x 210 mm, the 4:3 shape of a reMarkable 2 screen, which also suits a 13" iPad and fits an 11" iPad by width. The page shows at about its printed size, so the 11.5pt body text reads without zooming or pinching. Contents entries and PDF bookmarks jump to their section. One line in the document switches it to A4 for paper.
+Pages are 186 x 248 mm, 4:3, about the size of a reMarkable Paper Pro screen, so they show at nearly their printed size there and a little smaller on a reMarkable 2 or an iPad. The 11.5pt body text and 8pt code read without zooming or pinching. Contents entries and PDF bookmarks jump to their section. One line in the document switches it to A4 for paper.
 
 Every draft goes through two subagent passes before rendering:
 
