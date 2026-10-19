@@ -20,6 +20,13 @@
       "category": "productivity",
       "source": "./plugins/textbook",
       "homepage": "https://github.com/xmandeng/claude-plugins/tree/main/plugins/textbook"
+    },
+    {
+      "name": "webview",
+      "description": "A real browser in a pane inside Claude Code, opened with /webview, including over SSH. Needs terminal-browser and Claude Code's function hooks first: see https://github.com/xmandeng/claude-plugins/tree/main/plugins/webview#quick-start",
+      "category": "productivity",
+      "source": "./plugins/webview",
+      "homepage": "https://github.com/xmandeng/claude-plugins/tree/main/plugins/webview"
     }
   ]
 }

@@ -19,10 +19,13 @@ When a design is settled, the `textbook` plugin typesets it as a PDF reference y
 /plugin install textbook@xmandeng-plugins
 ```
 
+`webview` needs software and settings beyond the plugin, so it is not in the block above: follow [its setup steps](./plugins/webview/#quick-start) instead.
+
 | Plugin | What it gives you |
 |---|---|
 | [`review-suite`](#review-suite) | Five skills for interactive review playgrounds and diagrams, sharing one devserver and one PTY bridge |
 | [`textbook`](#textbook) | Polished PDF engineering references, sized for a reMarkable or iPad |
+| [`webview`](#webview) | A real browser in a pane inside Claude Code, including over SSH. Needs setup first: see [its quick start](./plugins/webview/#quick-start). |
 
 To pick up new versions later, run `/plugin marketplace update xmandeng-plugins`, then `/plugin update <plugin>`.
 
@@ -98,9 +101,19 @@ Ask for "a textbook" or "a PDF reference" of whatever you just designed. Require
 
 ---
 
+## webview
+
+> **Needs more than the plugin.** Before installing, add [terminal-browser](https://github.com/zenbu-labs/terminal-browser) and turn on Claude Code's function hooks; on a Linux server with no display, also set up Xvfb. A kitty-graphics terminal such as Ghostty is required, and background sessions are not supported. Follow [the plugin's quick start](./plugins/webview/#quick-start).
+
+Type `/webview` and [terminal-browser](https://github.com/zenbu-labs/terminal-browser), a real Chromium browser drawn with kitty graphics, opens in a pane to the right of the conversation. It is a fork of the zenbu-labs plugin that also works when Claude Code runs on a remote machine over SSH. There, frames go to the terminal as PNG instead of shared memory, and a virtual display (Xvfb) lets the browser start on a server. `localhost` in the pane is the remote machine, so you can check a dev server without leaving the session.
+
+![Claude Code on a remote machine over SSH, with a dev server open in the browser pane](./plugins/webview/assets/screenshots/browser-pane.jpg)
+
+---
+
 ## Docs
 
-Full documentation lives with each plugin: [`plugins/review-suite/`](./plugins/review-suite/) (per-skill docs, the devserver source, hooks, and tests) and [`plugins/textbook/`](./plugins/textbook/) (the skill, stylesheet, template, and diagram patterns).
+Full documentation lives with each plugin: [`plugins/review-suite/`](./plugins/review-suite/) (per-skill docs, the devserver source, hooks, and tests) [`plugins/textbook/`](./plugins/textbook/) (the skill, stylesheet, template, and diagram patterns), and [`plugins/webview/`](./plugins/webview/) (setup, the SSH fixes, and limits).
 
 ---
 

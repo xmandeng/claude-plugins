@@ -1,0 +1,35 @@
+{
+  "name": "webview",
+  "version": "0.3.1",
+  "description": "A real browser in a pane inside Claude Code, opened with /webview, including over SSH. Built on terminal-browser; fork of the zenbu-labs terminal-browser plugin 0.0.2. Needs terminal-browser and Claude Code's function hooks first: see https://github.com/xmandeng/claude-plugins/tree/main/plugins/webview#quick-start",
+  "author": {
+    "name": "xmandeng",
+    "email": "mandeng@gmail.com"
+  },
+  "homepage": "https://github.com/xmandeng/claude-plugins/tree/main/plugins/webview",
+  "repository": "https://github.com/xmandeng/claude-plugins",
+  "license": "MIT",
+  "keywords": [
+    "browser",
+    "webview",
+    "terminal-browser",
+    "ssh",
+    "function-hooks",
+    "kitty-graphics"
+  ],
+  "types": "./hooks/browser.d.ts",
+  "userConfig": {
+    "agentTool": {
+      "type": "boolean",
+      "title": "Give the agent a tool to open/close terminal-browser inside claude code",
+      "description": "Adds an open/close tool the model can call to show a page in the browser pane. Off by default.",
+      "default": false
+    },
+    "openLinks": {
+      "type": "boolean",
+      "title": "Open links from Claude's replies in the webview pane",
+      "description": "A plain click on a web link in a reply opens it in the pane instead of your browser; ctrl- or alt-click still opens the browser. Needs the fullscreen terminal UI. Off by default.",
+      "default": false
+    }
+  }
+}
