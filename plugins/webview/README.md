@@ -4,15 +4,23 @@ Opens [terminal-browser](https://github.com/zenbu-labs/terminal-browser), a real
 
 ![Claude Code on a remote machine over SSH, with a dev server open in the browser pane](./assets/screenshots/browser-pane.jpg)
 
-This is a fork of the zenbu-labs `terminal-browser` Claude Code plugin, version 0.0.2. It keeps that plugin's behaviour and adds two fixes for SSH sessions.
+This is a fork of the zenbu-labs `terminal-browser` Claude Code plugin, version 0.0.2. It keeps that plugin's behaviour and adds the fallbacks below.
 
-## What it fixes over SSH
+## How it draws in each kind of session
 
-**Frames go as PNG.** The upstream plugin hands each browser frame to Claude Code as a POSIX shared-memory object, which the terminal reads directly. Over SSH the terminal runs on another machine and cannot read that memory, so Claude Code refuses the frame and the pane stays empty. This plugin tries shared memory first. If Claude Code refuses it because the terminal cannot read files on this machine, the plugin switches to sending each frame as a PNG for the rest of the session. `hooks/png-relay.py` reads the frame, deletes it, and encodes it. It also deletes any older frames that were skipped while it worked. A frame over Claude Code's 2 MiB limit is compressed harder, then halved in size until it fits.
+The plugin always tries the upstream way first and falls back only when Claude Code refuses a frame.
 
-**The browser gets a display.** The upstream plugin's bridge process runs Electron, which exits at once on a Linux server with no display (`Missing X server or $DISPLAY`). The plugin then reports the browser as opened and draws an empty pane. When a virtual display is running at `:99`, this plugin starts the bridge with `DISPLAY=:99`. Nothing else on the machine sees that variable.
+| Session | What Claude Code allows | What the pane shows |
+|---|---|---|
+| Local terminal | Images read from shared memory | The page, as upstream |
+| Over SSH | Images sent as bytes, not read from this machine | The page, each frame sent as a PNG |
+| Background session (one started in the background and attached to, marked `@claude` in its header) | No images | A message: not supported, run `claude` directly in your terminal |
 
-On a local terminal neither fix is used, and the plugin behaves like upstream.
+**Over SSH, frames go as PNG.** The upstream plugin hands each frame to Claude Code as a POSIX shared-memory object, which the terminal reads directly. Over SSH the terminal runs on another machine and cannot read that memory, so Claude Code refuses the frame and the pane stays empty. On that refusal the plugin switches to PNG for the rest of the session. `hooks/frame-relay.py` reads the frame, deletes it, and encodes it, also deleting older frames that were skipped while it worked. A frame over Claude Code's 2 MiB limit is compressed harder, then halved in size until it fits.
+
+**Background sessions are not supported.** Claude Code draws no images in a background session, PNG included, so no picture of the page can show there. The plugin says so in the pane and stops the browser, freeing its frames; upstream instead leaves an empty pane while frames collect in memory. Run `claude` directly in your terminal to use `/webview`.
+
+**The browser gets a display.** The bridge process runs Electron, which exits at once on a Linux server with no display (`Missing X server or $DISPLAY`); upstream then reports the browser as opened and draws an empty pane. When a virtual display is running at `:99`, this plugin starts the bridge with `DISPLAY=:99`. Nothing else on the machine sees that variable.
 
 ## What it depends on
 
@@ -23,10 +31,10 @@ webview does not need the upstream terminal-browser Claude Code plugin: it carri
 | [terminal-browser](https://github.com/zenbu-labs/terminal-browser) program, tested with v0.13.4 | The machine running Claude Code | Always | Runs Chromium. Its `claude-bridge` command hands each frame to this plugin. | Install step 1 |
 | Claude Code function hooks | The machine running Claude Code | Always | Let a plugin draw a pane | Install step 2 |
 | A kitty-graphics terminal with Unicode placeholders, such as Ghostty or kitty | The machine you sit at | Always | Draws the frames | Already your terminal |
-| `python3` | The machine running Claude Code | Over SSH | Runs `hooks/png-relay.py`, which turns frames into PNG | Usually preinstalled |
+| `python3` | The machine running Claude Code | Over SSH | Runs `hooks/frame-relay.py`, which turns frames into PNG | Usually preinstalled |
 | Xvfb running at display `:99` | The machine running Claude Code, if Linux | When it has no display, as on a server | Gives the browser a display to start on | [Linux server without a display](#linux-server-without-a-display) |
 
-No multiplexer may sit between the terminal and Claude Code: tmux and herdr break the graphics.
+No multiplexer may sit between the terminal and Claude Code: tmux and herdr break the graphics. Claude Code must run directly in the terminal, not as a background session.
 
 The plugin calls terminal-browser's `claude-bridge` interface, which is not a documented public API. A new terminal-browser release can change it. The plugin checks terminal-browser's capabilities before it starts and asks for an upgrade when they are missing.
 
@@ -90,15 +98,33 @@ The service runs while you are logged in. The plugin finds it through `/tmp/.X11
 
 Inside the pane, terminal-browser's own shortcuts apply: ⌘L / Ctrl+L to edit the URL, ⌘T / Ctrl+T for a new tab, and so on. The start page lists every listening port, not only web servers, so some of its links lead to error pages.
 
-To let Claude open and close the pane itself, turn on the plugin's `agentTool` option with `/plugin configure webview@xmandeng-plugins`. Claude can already drive an open page with the `terminal-browser action` CLI.
+## Options
+
+Both are off by default.
+
+| Option | When on |
+|---|---|
+| `agentTool` | Claude gets tools to open and close the pane itself, so it can show you a page it is working on. It can already drive an open page with the `terminal-browser action` CLI. |
+| `openLinks` | A plain click on a web link in Claude's replies opens it in the pane instead of your browser. Ctrl- or alt-click still opens your browser. Needs the fullscreen terminal UI (`"tui": "fullscreen"`), where Claude Code reports plain clicks. |
+
+Turn one on or off with `/plugin configure webview@xmandeng-plugins`, or in `~/.claude/settings.json`:
+
+```json
+"pluginConfigs": {
+  "webview@xmandeng-plugins": { "options": { "agentTool": true, "openLinks": true } }
+}
+```
+
+Restart Claude Code after a change: the plugin reads its options when a session starts.
 
 ## Limits
 
 - Over SSH, each frame is converted and sent in full, so scrolling is less smooth than on a local terminal.
+- Background sessions are not supported: Claude Code draws no images there.
 - Clicks can land slightly off, because Claude Code does not report pixel mouse positions. This is the same as upstream.
 - The plugin depends on terminal-browser's `claude-bridge` interface and on Claude Code's experimental function hooks. A terminal-browser or Claude Code release can change either. The plugin checks terminal-browser's capabilities before it starts, and asks for an upgrade when they are missing.
-- Debug lines (`png relay failed: …`) go to Claude Code's debug log. The bridge logs to `~/.terminal-browser/logs/claude-code-plugin-bridge.log`.
+- Debug lines (`frame relay failed: …`) go to Claude Code's debug log. The bridge logs to `~/.terminal-browser/logs/claude-code-plugin-bridge.log`.
 
 ## Credits
 
-Based on the terminal-browser Claude Code plugin by Zenbu Labs, Inc., used under the MIT License (see `LICENSE-terminal-browser`). The changes are in `hooks/register.tsx` and the added `hooks/png-relay.py`.
+Based on the terminal-browser Claude Code plugin by Zenbu Labs, Inc., used under the MIT License (see `LICENSE-terminal-browser`). The changes are in `hooks/register.tsx` and the added `hooks/frame-relay.py`.

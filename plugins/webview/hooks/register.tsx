@@ -26,6 +26,13 @@ const REQUIRED_CAPABILITIES = ['embedding', 'image-frames']
 const WATCH_RETRY_MS = 250
 const DENIED_REDRAW_MS = 500
 const DENIALS_BEFORE_LOGGING = 3
+// openLinks: replies holding web links are redrawn as a Markdown keyed this,
+// so a plain click on one of its links reaches ui.press instead of the terminal
+const LINK_KEY = 'webview-links'
+const WEB_LINK = /https?:\/\/[^\s<>()\[\]`'"]+/g
+const BACKGROUND_SESSION_MESSAGE =
+  'webview can\'t draw the browser in a background session: Claude Code draws no images there. '
+  + 'Run claude directly in your terminal, then /webview.'
 
 
 const state = {
@@ -39,9 +46,11 @@ const state = {
   mounted: null as { cols: number; rows: number } | null,
   watcher: 0,
   // over ssh the terminal cannot read this machine's shared memory; frames
-  // then go as PNG bytes converted by hooks/png-relay.py
+  // then go as PNG bytes converted by hooks/frame-relay.py
   pngMode: false,
   png: null as string | null,
+  // a background session draws no images at all; the pane says so instead
+  unsupported: false,
   // a hack to programatically trigger agent input focus
   viewGeneration: 0,
 }
@@ -149,27 +158,48 @@ function imageSource(frame: Frame) {
 }
 
 const SHM_UNREADABLE = /cannot read files on this machine/
+const NO_IMAGES = /no placeholder images/
 
-async function framePng($: EngineInterface, frame: Frame): Promise<string | null> {
+async function relay($: EngineInterface, frame: Frame, mode: string[]): Promise<string | null> {
   const path = frame.shm.startsWith('/') ? `/dev/shm${frame.shm}` : `/dev/shm/${frame.shm}`
   try {
     const { exitCode, stdout, stderr } = await $.process.run(
-      ['python3', `${$.plugin.root}/hooks/png-relay.py`, path, frame.format, String(frame.width), String(frame.height)],
+      ['python3', `${$.plugin.root}/hooks/frame-relay.py`, path, frame.format, String(frame.width), String(frame.height), ...mode],
       { timeoutMs: 5_000 },
     )
-    if (exitCode !== 0 || !stdout) {
-      $.ui.log(`webview: png relay failed: ${stderr.trim() || `exit ${exitCode}`}`, { to: 'debug' })
+    if (exitCode !== 0 || (mode[0] !== 'drop' && !stdout)) {
+      $.ui.log(`webview: frame relay failed: ${stderr.trim() || `exit ${exitCode}`}`, { to: 'debug' })
       return null
     }
     return stdout
   } catch (err) {
-    $.ui.log(`webview: png relay failed: ${err}`, { to: 'debug' })
+    $.ui.log(`webview: frame relay failed: ${err}`, { to: 'debug' })
     return null
   }
 }
 
+const framePng = ($: EngineInterface, frame: Frame) => relay($, frame, ['png'])
+const dropFrame = ($: EngineInterface, frame: Frame) => relay($, frame, ['drop'])
+
 function paneSource(frame: Frame) {
   return state.pngMode && state.png ? { png: state.png } : imageSource(frame)
+}
+
+// a background session draws no images, PNG included: say so in the pane and
+// stop the browser, whose frames nothing would read or free
+async function stopUnsupported($: EngineInterface, frame: Frame): Promise<void> {
+  state.unsupported = true
+  state.frame = null
+  await post($, '/browser/close', {})
+  await dropFrame($, frame)
+  $.ui.log(`webview: ${BACKGROUND_SESSION_MESSAGE}`)
+  $.ui.invalidate('ui.render')
+}
+
+function webLinks(text: string): string[] {
+  const found = new Set<string>()
+  for (const match of text.matchAll(WEB_LINK)) found.add(match[0].replace(/[.,;:!?]+$/, ''))
+  return [...found].slice(0, 256)
 }
 
 function imageGrid(frame: Frame, cols: number, rows: number) {
@@ -218,20 +248,29 @@ async function watchBridge($: EngineInterface): Promise<void> {
     }
     const frame = fresh.frame
     if (!frame || frame.generation === state.frame?.generation) continue
+    if (state.unsupported) {
+      await dropFrame($, frame)
+      continue
+    }
     state.frame = frame
     if (!fitsMounted(frame)) {
       $.ui.invalidate('ui.render')
       continue
     }
+    let result: { deny?: string } = {}
     if (!state.pngMode) {
-      const result = await $.ui.blit({ requestId: PANE, key: IMAGE_KEY, source: imageSource(frame) })
-      if (result.deny && SHM_UNREADABLE.test(result.deny)) state.pngMode = true
-      else if (!result.deny) {
+      const shm = await $.ui.blit({ requestId: PANE, key: IMAGE_KEY, source: imageSource(frame) })
+      if (!shm.deny) {
         denials = 0
         continue
       }
+      if (NO_IMAGES.test(shm.deny)) {
+        await stopUnsupported($, frame)
+        continue
+      }
+      if (SHM_UNREADABLE.test(shm.deny)) state.pngMode = true
+      else result = shm
     }
-    let result: { deny?: string } = { deny: 'frame not converted' }
     if (state.pngMode) {
       const png = await framePng($, frame)
       if (!live()) return
@@ -254,6 +293,13 @@ async function watchBridge($: EngineInterface): Promise<void> {
 }
 
 async function openBrowser($: EngineInterface, raw: string | null): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  if (state.unsupported) {
+    // this session already turned the browser down: show the reason, start nothing
+    state.open = true
+    await $.ui.open({ id: PANE, title: 'webview', focus: true, rows: 6 })
+    $.ui.invalidate('ui.render')
+    return { ok: false, error: BACKGROUND_SESSION_MESSAGE }
+  }
   if (state.port === null) {
     const started = await startBridge($)
     if (!started.ok) return started
@@ -306,6 +352,7 @@ async function deliverAgentText($: EngineInterface): Promise<void> {
 
 export const register: Register = (on, options) => {
   const agentToolEnabled = options.agentTool === true
+  const openLinksEnabled = options.openLinks === true
 
 // this is a hack because the plugin api does not allow $ or the result of next to be passed to functions
   on('engine.create', async ($, e, next) => {
@@ -334,7 +381,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'webview',
       description: 'Open a browser to the right',
-      argumentHint: '[url]',
+      argumentHint: '[url | close]',
       immediate: true,
     }).catch(err => $.ui.log(`webview: /webview not registered: ${err}`))
     if (agentToolEnabled) {
@@ -375,7 +422,15 @@ export const register: Register = (on, options) => {
       const { Box } = await $.ui.resolve(e)
       return <Box />
     }
-    const { Box, Client, Image } = await $.ui.resolve(e)
+    const { Box, Client, Image, Text } = await $.ui.resolve(e)
+    if (state.unsupported) {
+      state.mounted = null
+      return (
+        <Box flexDirection="column" padding={1}>
+          <Text>{BACKGROUND_SESSION_MESSAGE}</Text>
+        </Box>
+      )
+    }
     const rows = e.props.scroll.bodyRows > 0 ? e.props.scroll.bodyRows : Math.max(8, (e.viewport?.rows ?? 30) - 8)
     const cols = Math.max(1, e.props.bodyColumns > 0 ? e.props.bodyColumns : (e.viewport?.columns ?? 80))
     const frame = state.frame
@@ -420,6 +475,24 @@ export const register: Register = (on, options) => {
     await post($, '/input', { events })
     return {}
   })
+
+  if (openLinksEnabled) {
+    on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+      if (e.surface !== 'terminal' || e.props.isSummary) return next(e)
+      const links = webLinks(e.props.text)
+      if (links.length === 0) return next(e)
+      const { Markdown } = await $.ui.resolve(e)
+      // the press is taken by the ui.press hook below, which has $ to open the pane
+      return <Markdown key={LINK_KEY} text={e.props.text} pressableLinks={links} onLinkPress={() => {}} />
+    })
+
+    on('ui.press', async ($, e, next) => {
+      if (e.element !== LINK_KEY || !e.link) return next(e)
+      const opened = await openBrowser($, e.link.href)
+      if (!opened.ok) $.ui.toast(`webview: ${opened.error}`)
+      return { element: e.element }
+    })
+  }
 
   on('ui.close', { id: PANE }, async ($, e, next) => {
     const r = await next(e)

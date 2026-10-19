@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Turn one terminal-browser shared-memory frame into a base64 PNG on stdout.
+"""Turn one terminal-browser shared-memory frame into something Claude Code draws.
 
-Over SSH the terminal cannot read this machine's shared memory, so Claude Code
-refuses { shm } image sources; a { png } source of at most 2 MiB still draws.
+Claude Code refuses { shm } image sources when the terminal cannot read this
+machine's shared memory (over SSH). This reads the frame, deletes it, and writes
+one of:
 
-usage: png-relay.py <shm path> <rgb|rgba> <width> <height>
+  png    a base64 PNG of at most 2 MiB, for an Image  { png } source
+  drop   nothing; the frame is only deleted (nobody will draw it)
+
+usage: frame-relay.py <shm path> <rgb|rgba> <width> <height> png|drop
 """
 import base64
 import os
@@ -44,6 +48,18 @@ def halve(raw, width, height, channels):
     return bytes(out), half_w, half_h
 
 
+def png(raw, width, height, channels):
+    data = encode(raw, width, height, channels, 1)
+    if len(data) > MAX_PNG:
+        data = encode(raw, width, height, channels, 6)
+    while len(data) > MAX_PNG and width > 64:
+        raw, width, height = halve(raw, width, height, channels)
+        data = encode(raw, width, height, channels, 6)
+    if len(data) > MAX_PNG:
+        sys.exit("frame too large")
+    return base64.b64encode(data).decode()
+
+
 def drop_stale(path):
     """Remove frames of the same stream older than this one; nothing else reads them."""
     folder, name = os.path.split(path)
@@ -61,23 +77,20 @@ def drop_stale(path):
 
 
 def main():
-    path, fmt, width, height = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+    path, fmt, width, height, mode = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), sys.argv[5]
     channels = 4 if fmt == "rgba" else 3
     with open(path, "rb") as f:
         raw = f.read(width * height * channels)
     os.unlink(path)
     drop_stale(path)
+    if mode == "drop":
+        return
     if len(raw) < width * height * channels:
         sys.exit("short frame")
-    data = encode(raw, width, height, channels, 1)
-    if len(data) > MAX_PNG:
-        data = encode(raw, width, height, channels, 6)
-    while len(data) > MAX_PNG and width > 64:
-        raw, width, height = halve(raw, width, height, channels)
-        data = encode(raw, width, height, channels, 6)
-    if len(data) > MAX_PNG:
-        sys.exit("frame too large")
-    sys.stdout.write(base64.b64encode(data).decode())
+    if mode == "png":
+        sys.stdout.write(png(raw, width, height, channels))
+    else:
+        sys.exit(f"unknown mode {mode}")
 
 
 if __name__ == "__main__":
