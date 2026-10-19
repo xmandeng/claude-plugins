@@ -22,11 +22,11 @@
       "homepage": "https://github.com/xmandeng/claude-plugins/tree/main/plugins/textbook"
     },
     {
-      "name": "terminal-browser-ssh",
-      "description": "Opens terminal-browser in a pane inside Claude Code, including over SSH. Fork of the zenbu-labs terminal-browser plugin.",
+      "name": "webview",
+      "description": "A real browser in a pane inside Claude Code, opened with /webview, including over SSH. Built on terminal-browser.",
       "category": "productivity",
-      "source": "./plugins/terminal-browser-ssh",
-      "homepage": "https://github.com/xmandeng/claude-plugins/tree/main/plugins/terminal-browser-ssh"
+      "source": "./plugins/webview",
+      "homepage": "https://github.com/xmandeng/claude-plugins/tree/main/plugins/webview"
     }
   ]
 }

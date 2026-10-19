@@ -18,8 +18,8 @@ import {
 const PANE = 'browser'
 const IMAGE_KEY = 'view'
 const IMAGE_ALT = ''
-const OPEN_TOOL = 'mcp__terminal-browser__open'
-const CLOSE_TOOL = 'mcp__terminal-browser__close'
+const OPEN_TOOL = 'mcp__webview__open'
+const CLOSE_TOOL = 'mcp__webview__close'
 const START_URL = 'terminal-browser://start'
 const INSTALL_URL = 'https://terminal-browser.sh'
 const REQUIRED_CAPABILITIES = ['embedding', 'image-frames']
@@ -158,12 +158,12 @@ async function framePng($: EngineInterface, frame: Frame): Promise<string | null
       { timeoutMs: 5_000 },
     )
     if (exitCode !== 0 || !stdout) {
-      $.ui.log(`terminal-browser: png relay failed: ${stderr.trim() || `exit ${exitCode}`}`, { to: 'debug' })
+      $.ui.log(`webview: png relay failed: ${stderr.trim() || `exit ${exitCode}`}`, { to: 'debug' })
       return null
     }
     return stdout
   } catch (err) {
-    $.ui.log(`terminal-browser: png relay failed: ${err}`, { to: 'debug' })
+    $.ui.log(`webview: png relay failed: ${err}`, { to: 'debug' })
     return null
   }
 }
@@ -244,7 +244,7 @@ async function watchBridge($: EngineInterface): Promise<void> {
       continue
     }
     denials += 1
-    if (denials === DENIALS_BEFORE_LOGGING) $.ui.log(`terminal-browser: frame blit refused: ${result.deny}`)
+    if (denials === DENIALS_BEFORE_LOGGING) $.ui.log(`webview: frame blit refused: ${result.deny}`)
     const now = Date.now()
     if (now - lastDeniedRedraw >= DENIED_REDRAW_MS) {
       lastDeniedRedraw = now
@@ -332,30 +332,30 @@ export const register: Register = (on, options) => {
     } catch {}
     if (!surfaces.includes('terminal')) return r
     await $.command.register({
-      name: 'browser',
+      name: 'webview',
       description: 'Open a browser to the right',
       argumentHint: '[url]',
       immediate: true,
-    }).catch(err => $.ui.log(`terminal-browser: /browser not registered: ${err}`))
+    }).catch(err => $.ui.log(`webview: /webview not registered: ${err}`))
     if (agentToolEnabled) {
       await $.tool.register({
         name: 'open',
         description: 'Open terminal-browser directly inside claude code. Control the open page with the terminal-browser action CLI.',
         inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'The page to open, as a full url or a host name' } } },
-      }).catch(err => $.ui.log(`terminal-browser: open tool not registered: ${err}`))
-      await $.tool.register({ name: 'close', description: 'Close the terminal-browser pane.' }).catch(err => $.ui.log(`terminal-browser: close tool not registered: ${err}`))
+      }).catch(err => $.ui.log(`webview: open tool not registered: ${err}`))
+      await $.tool.register({ name: 'close', description: 'Close the terminal-browser pane.' }).catch(err => $.ui.log(`webview: close tool not registered: ${err}`))
     }
     return r
   })
 
-  on('command.run', { command: 'browser' }, async ($, e) => {
+  on('command.run', { command: 'webview' }, async ($, e) => {
     const arg = e.args.trim()
     if (arg === 'close' || (!arg && state.open)) {
       await closeBrowser($)
-      return { text: 'Closed terminal-browser' }
+      return { text: 'Closed the browser pane' }
     }
     const opened = await openBrowser($, arg || null)
-    return { text: opened.ok ? 'Opened terminal-browser' : opened.error }
+    return { text: opened.ok ? 'Opened the browser pane' : opened.error }
   })
 
   on('tool.call', { tool: new RegExp(`^${OPEN_TOOL}$`) }, async ($, e) => {

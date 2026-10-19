@@ -1,6 +1,6 @@
-# terminal-browser-ssh
+# webview
 
-Opens [terminal-browser](https://github.com/zenbu-labs/terminal-browser), a real Chromium browser drawn in the terminal, in a pane inside Claude Code. Type `/browser` and the browser opens to the right of the conversation. The difference from the upstream plugin: it also works when Claude Code runs on a remote machine you reached over SSH.
+Opens [terminal-browser](https://github.com/zenbu-labs/terminal-browser), a real Chromium browser drawn in the terminal, in a pane inside Claude Code. Type `/webview` and the browser opens to the right of the conversation. The difference from the upstream plugin: it also works when Claude Code runs on a remote machine you reached over SSH.
 
 ![Claude Code on a remote machine over SSH, with a dev server open in the browser pane](./assets/screenshots/browser-pane.jpg)
 
@@ -14,13 +14,21 @@ This is a fork of the zenbu-labs `terminal-browser` Claude Code plugin, version 
 
 On a local terminal neither fix is used, and the plugin behaves like upstream.
 
-## Requirements
+## What it depends on
 
-- Claude Code with function hooks enabled (see Install)
-- [terminal-browser](https://github.com/zenbu-labs/terminal-browser) installed on the machine where Claude Code runs. Tested with v0.13.4.
-- A terminal that supports the kitty graphics protocol with Unicode placeholders, such as Ghostty or kitty
-- No multiplexer between the terminal and Claude Code: tmux and herdr break the graphics
-- On a Linux server with no display: Xvfb and `python3`
+webview does not need the upstream terminal-browser Claude Code plugin: it carries its own copy of that code. It does need the terminal-browser program and a few things on the machines involved.
+
+| Piece | Where | Needed | What it does | How it gets there |
+|---|---|---|---|---|
+| [terminal-browser](https://github.com/zenbu-labs/terminal-browser) program, tested with v0.13.4 | The machine running Claude Code | Always | Runs Chromium. Its `claude-bridge` command hands each frame to this plugin. | Install step 1 |
+| Claude Code function hooks | The machine running Claude Code | Always | Let a plugin draw a pane | Install step 2 |
+| A kitty-graphics terminal with Unicode placeholders, such as Ghostty or kitty | The machine you sit at | Always | Draws the frames | Already your terminal |
+| `python3` | The machine running Claude Code | Over SSH | Runs `hooks/png-relay.py`, which turns frames into PNG | Usually preinstalled |
+| Xvfb running at display `:99` | The machine running Claude Code, if Linux | When it has no display, as on a server | Gives the browser a display to start on | [Linux server without a display](#linux-server-without-a-display) |
+
+No multiplexer may sit between the terminal and Claude Code: tmux and herdr break the graphics.
+
+The plugin calls terminal-browser's `claude-bridge` interface, which is not a documented public API. A new terminal-browser release can change it. The plugin checks terminal-browser's capabilities before it starts and asks for an upgrade when they are missing.
 
 ## Install
 
@@ -42,14 +50,10 @@ On the machine where Claude Code runs:
 
    ```text
    /plugin marketplace add xmandeng/claude-plugins
-   /plugin install terminal-browser-ssh@xmandeng-plugins
+   /plugin install webview@xmandeng-plugins
    ```
 
-4. If the upstream plugin is installed, disable it. Both register `/browser`.
-
-   ```text
-   /plugin disable terminal-browser@terminal-browser
-   ```
+4. The upstream plugin can stay installed: its command is `/browser`, and this one's is `/webview`. Both offer other plugins the same `$.browser` API, so enable only one if another plugin uses it.
 
 5. Restart Claude Code.
 
@@ -62,7 +66,7 @@ sudo apt install xvfb
 mkdir -p ~/.config/systemd/user
 cat > ~/.config/systemd/user/xvfb.service <<'EOF'
 [Unit]
-Description=Virtual X display :99 (for terminal-browser-ssh)
+Description=Virtual X display :99 (for webview)
 
 [Service]
 ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
@@ -80,13 +84,13 @@ The service runs while you are logged in. The plugin finds it through `/tmp/.X11
 
 | Command | What it does |
 |---|---|
-| `/browser` | Opens the pane at terminal-browser's start page, which lists the servers listening on this machine |
-| `/browser <url>` | Opens the pane at a URL; `localhost` means the machine Claude Code runs on |
-| `/browser close` | Closes the pane |
+| `/webview` | Opens the pane at terminal-browser's start page, which lists the servers listening on this machine |
+| `/webview <url>` | Opens the pane at a URL; `localhost` means the machine Claude Code runs on |
+| `/webview close` | Closes the pane |
 
 Inside the pane, terminal-browser's own shortcuts apply: ⌘L / Ctrl+L to edit the URL, ⌘T / Ctrl+T for a new tab, and so on. The start page lists every listening port, not only web servers, so some of its links lead to error pages.
 
-To let Claude open and close the pane itself, turn on the plugin's `agentTool` option with `/plugin configure terminal-browser-ssh@xmandeng-plugins`. Claude can already drive an open page with the `terminal-browser action` CLI.
+To let Claude open and close the pane itself, turn on the plugin's `agentTool` option with `/plugin configure webview@xmandeng-plugins`. Claude can already drive an open page with the `terminal-browser action` CLI.
 
 ## Limits
 
