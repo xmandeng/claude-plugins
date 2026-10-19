@@ -1,0 +1,22 @@
+{
+  "name": "terminal-browser-ssh",
+  "version": "0.1.0",
+  "description": "Opens terminal-browser in a pane inside Claude Code, including over SSH: frames go as PNG when the terminal cannot read this machine's shared memory, and the browser gets a virtual display on servers without one. Fork of the zenbu-labs terminal-browser plugin 0.0.2.",
+  "author": {
+    "name": "xmandeng",
+    "email": "mandeng@gmail.com"
+  },
+  "homepage": "https://github.com/xmandeng/claude-plugins/tree/main/plugins/terminal-browser-ssh",
+  "repository": "https://github.com/xmandeng/claude-plugins",
+  "license": "MIT",
+  "keywords": ["browser", "terminal-browser", "ssh", "function-hooks", "kitty-graphics"],
+  "types": "./hooks/browser.d.ts",
+  "userConfig": {
+  "agentTool": {
+    "type": "boolean",
+    "title": "Give the agent a tool to open/close terminal-browser inside claude code",
+    "description": "Adds an open/close tool the model can call to show a page in the browser pane. Off by default.",
+    "default": false
+  }
+}
+}
