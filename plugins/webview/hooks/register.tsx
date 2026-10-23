@@ -357,17 +357,18 @@ export const register: Register = (on, options) => {
 // this is a hack because the plugin api does not allow $ or the result of next to be passed to functions
   on('engine.create', async ($, e, next) => {
     const built = await next(e)
-    const servedByHooks = () => { throw new Error('the browser noun is served by its hooks') }
-    const browser: Browser = { open: servedByHooks, close: servedByHooks }
-    return { ...built, browser }
+    const servedByHooks = () => { throw new Error('the webview noun is served by its hooks') }
+    // $.webview, not upstream's $.browser: Claude Code loads only one plugin that adds a noun
+    const webview: Browser = { open: servedByHooks, close: servedByHooks }
+    return { ...built, webview }
   })
 
-  on('browser.open', async ($, e) => {
+  on('webview.open', async ($, e) => {
     const opened = await openBrowser($, e.url ?? null)
     return { value: opened }
   })
 
-  on('browser.close', async ($) => {
+  on('webview.close', async ($) => {
     return { value: await closeBrowser($) }
   })
 

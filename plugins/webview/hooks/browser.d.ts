@@ -11,6 +11,6 @@ export type Browser = {
 
 declare module 'claude-code' {
   interface EngineInterface {
-    browser: Browser
+    webview: Browser
   }
 }
