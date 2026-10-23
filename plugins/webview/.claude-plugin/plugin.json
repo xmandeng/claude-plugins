@@ -1,6 +1,6 @@
 {
   "name": "webview",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "A real browser in a pane inside Claude Code, opened with /webview, including over SSH. Built on terminal-browser; fork of the zenbu-labs terminal-browser plugin 0.0.2. Needs terminal-browser and Claude Code's function hooks first: see https://github.com/xmandeng/claude-plugins/tree/main/plugins/webview#quick-start",
   "author": {
     "name": "xmandeng",

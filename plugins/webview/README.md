@@ -53,7 +53,7 @@ Your terminal must support the kitty graphics protocol with Unicode placeholders
 | `python3` | The machine running Claude Code | Over SSH |
 | Xvfb at display `:99` | The machine running Claude Code | Linux with no display, such as a server |
 
-webview carries its own copy of the upstream plugin's code, so the upstream plugin is not needed. It can stay installed: its command is `/browser`, this one's is `/webview`.
+webview carries its own copy of the upstream plugin's code, so the upstream plugin is not needed. It can stay installed: its command is `/browser`, this one's is `/webview`. For other plugins, upstream adds `$.browser` and webview adds `$.webview`, with the same `open` and `close` methods; Claude Code loads only one plugin that adds a given name, so the two names keep both loading.
 
 ### Linux server without a display
 
